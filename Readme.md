@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="assets/icon.png" width="96" alt="">
+  <img src="assets/icon.png" width="96" alt="Inplace-Unpack">
 </p>
 
-<h1 align="center">Inplace-Unpack</h1>
+<h1 align="center">Inplace-Unpack for Linux</h1>
 
 <p align="center">
-  Unzip a huge ZIP even when your disk doesn't have room for the ZIP <i>and</i> the files.
+  Unzip a huge ZIP on Linux even when your disk doesn't have room for the ZIP <i>and</i> the extracted files at the same time.
 </p>
 
 <p align="center">
-  <img alt="Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue">
+  <img alt="Linux" src="https://img.shields.io/badge/platform-Linux%20(btrfs%20%7C%20ext4%20%7C%20xfs%20%7C%20zfs)-FCC624?logo=linux&logoColor=black">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-yellow">
 </p>
@@ -18,194 +18,229 @@
 > already unpacked are fine and the rest can be resumed, but a broken ZIP can't be "un-eaten".
 > Only use it on archives you could download again.
 
+Linux port & optimization fork of [HaswellHD/InPlace_UnPack](https://github.com/HaswellHD/InPlace_UnPack).
+
+---
+
 ## What's this?
 
-I had a 160 GB ZIP and 130 GB of free space. Explorer, 7-Zip and WinRAR all need room for the archive and
-the extracted files at the same time, so none of them worked.
+Suppose you have a 160 GB ZIP and only 130 GB of free space. `unzip`, Ark, File Roller and `7z` all need room
+for the archive *and* the extracted files at the same time, so none of them can finish.
 
-Inplace-Unpack unpacks the files in the order they sit inside the ZIP. As soon as a file is safely on disk,
-the part of the ZIP it came from is given back to Windows (NTFS sparse files). So you only need about as
-much free space as the ZIP itself, not double.
-
-![Main window](docs/screenshots/main-window.png)
+**Inplace-Unpack** extracts entries in the exact byte order they sit inside the ZIP. As soon as a batch of
+files is safely written, `fsync`ed to disk, and recorded in a crash-safe journal, the corresponding byte range
+of the ZIP is punched out with `fallocate(FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE)`, returning those blocks
+immediately to the filesystem. You only need roughly *(unpacked size − ZIP size)* of free space plus a small
+safety reserve.
 
 ## Good for
 
-- Google Takeout exports (photos, Drive, YouTube) on a laptop with a small SSD
-- "Download as ZIP" exports from iCloud, OneDrive, Dropbox or social networks
-- restoring your own backup ZIPs onto a nearly full disk
-- big datasets (ML, research, GIS) that come as one giant ZIP or as `.zip.001, .002, ...`
-- photo and video collections handed over as ZIP
+- Google Takeout exports (Photos, Drive, YouTube) on a laptop with a nearly full SSD
+- Cloud "Download as ZIP" exports (Nextcloud, Proton Drive, OneDrive, iCloud, Dropbox)
+- Restoring large backup ZIPs onto a tight root or `/home` partition
+- Big ML, research or GIS datasets distributed as a single giant `.zip` or split `.zip.001, .002, ...`
+- Large media collections handed over as ZIP
 
-## What it does
+## Features on Linux
 
-- Frees space while unpacking (NTFS / ReFS).
-- Split ZIPs (`name.zip.001`, `.002`, ... like 7-Zip's "split to volumes"): each part is deleted once
-  everything in it is unpacked. You can turn that off.
-- Checks everything first: encryption, compression method, broken or malicious entries, file names, and
-  whether the space will actually be enough. Nothing is touched before that check passes.
-- Crash-safe. A piece of the ZIP is only released after the file is written, flushed and recorded in a
-  small journal. Power cut, crash, closed window, full disk: start it again and it continues.
-- Resumes on its own when you open it again, and retries after "disk full" or a temporary error.
-- Damaged files inside the ZIP (CRC errors) are kept as they are, listed in `<zip>.damaged.txt`, and the
-  rest keeps going (Safe mode stops instead).
-- Three modes (Safe, Balanced, Performance) and a bunch of advanced settings.
-- Live monitor: speed, average speed, time left, CPU, RAM, disk.
-- Optional right-click entry in Explorer: *Extract with Inplace-Unpack* (Windows 11: under
-  *Show more options*). Per user, no admin rights.
-- Handles ZIP64 (files over 4 GB, more than 65,535 entries), Unicode names, Deflate, BZIP2, LZMA,
-  Zstandard and Stored.
-- English by default, German in the settings.
-- No dependencies, no network, no telemetry, no admin rights.
+- **Kernel hole punching (`fallocate64`)**: Frees space while extracting on **btrfs, ext4, xfs, f2fs, zfs,
+  bcachefs, tmpfs, and ntfs3** — verified dynamically per mount via an anonymous `O_TMPFILE` kernel probe. No
+  root privileges required.
+- **Btrfs-aware**: Recognizes shared storage pools across Btrfs subvolumes (e.g. Fedora `/` and `/home` on the
+  same NVMe partition), handles transparent filesystem compression (`compress=zstd`), and falls back cleanly if
+  a target subdirectory crosses a subvolume boundary (`EXDEV`).
+- **Split ZIPs (`name.zip.001`, `.002`, ...)**: Each finished volume part is deleted once every entry inside it
+  is safely on disk (works even on filesystems without hole punching).
+- **Pre-flight safety check**: Verifies encryption flags, compression methods, overlapping/hostile entries,
+  symlink collisions, UTF-8 byte-length limits (`NAME_MAX = 255`), and peak disk space *before* touching a
+  single byte of the archive.
+- **Crash-safe & resumable**: Archive blocks are never punched out before extracted files (`fsync`), the atomic
+  checksummed journal (`<zip>.unzip-progress`), and the parent directory entry are flushed to disk. Survives
+  power cuts, `SIGKILL`, closed windows, and `ENOSPC` ("disk full").
+- **Page-cache friendly**: Uses `POSIX_FADV_SEQUENTIAL` read-ahead on the archive, `fdatasync` steady streaming
+  flushes, and `POSIX_FADV_DONTNEED` cache eviction on large extracted files so 100+ GB runs don't flood RAM or
+  push desktop apps into swap/zram.
+- **Parallel NVMe I/O**: Dedicated per-worker archive handles with 256 KiB read buffers avoid lock/seek
+  thrashing across threads (~525 MB/s in Performance mode on Btrfs NVMe).
+- **Native Linux Desktop integration**:
+  - Automatic **Dark / Light theme** detection (KDE Plasma `kdeglobals` & GNOME `gsettings`) with live **☾/☀**
+    and **DE/EN** toggles in the header bar (no restart needed).
+  - Native **KDE (`kdialog`)** and **GNOME (`zenity`)** file/folder dialogs when available, with automatic
+    fallback to an enhanced Tk dialog.
+  - Optional right-click menu entry for **KDE Dolphin** (`~/.local/share/kio/servicemenus`) and **GNOME Files /
+    Nautilus** (`~/.local/share/nautilus/scripts`).
+  - Optional per-user XDG autostart resume (`~/.config/autostart`) while a job is unfinished.
+  - Preserves Unix executable permissions (`+x`) from Unix-created ZIPs while stripping unsafe bits.
+- **Zero third-party Python dependencies**, no network access, no telemetry, no root needed.
 
-## Install
+---
 
-Grab `Inplace-Unpack.exe` from [Releases](https://github.com/HaswellHD/InPlace_UnPack/releases) and run it.
-No Python needed. The file isn't code-signed yet, so Windows SmartScreen will probably warn you the first time
-("More info" → "Run anyway").
+## Install (Linux)
 
-Or run it from source:
-
-```powershell
-git clone https://github.com/HaswellHD/InPlace_UnPack.git
-cd InPlace_UnPack
-python app_gui.py
-```
-
-## Linux (this fork)
-
-This fork adds Linux support next to the unchanged Windows code. Instead of NTFS sparse files it
-releases space with `fallocate(FALLOC_FL_PUNCH_HOLE)`, which works on **btrfs, ext4, xfs**, f2fs and
-tmpfs without root.
+### 1. Install Python 3.11+ and Tkinter
 
 ```sh
-sudo dnf install python3-tkinter        # Debian/Ubuntu: sudo apt install python3-tk
-git clone https://github.com/ezgerazer/InPlace_UnPack-forlinux.git
-cd InPlace_UnPack-forlinux
-./install-linux.sh                      # app-menu entry + `inplace-unpack` / `inplace-unpack-cli`
+# Fedora / RHEL
+sudo dnf install python3 python3-tkinter git
+
+# Debian / Ubuntu / Linux Mint
+sudo apt install python3 python3-tk git
+
+# Arch Linux / CachyOS / EndeavourOS
+sudo pacman -S python tk git
+
+# openSUSE
+sudo zypper install python3 python3-tk git
 ```
 
-What is different on Linux:
+*(Optional: `kdialog` on KDE or `zenity` on GNOME/GTK is used automatically for native file dialogs — usually pre-installed.)*
 
-- **Hole punching & page-cache control** (`inplace_unpack/_winfs_posix.py`): kernel-probed `fallocate64(FALLOC_FL_PUNCH_HOLE)` via `O_TMPFILE` (supports btrfs, ext4, xfs, f2fs, zfs, bcachefs, ntfs3, tmpfs), Btrfs subvolume pool detection, `POSIX_FADV_SEQUENTIAL` read-ahead, `POSIX_FADV_DONTNEED` cache eviction on large files, `fdatasync` streaming flushes, and directory `fsync` on journal commits.
-- **Parallel I/O & priority** (`engine.py`, `_sysinfo_posix.py`): dedicated per-worker archive handles (no shared `ZipFile` lock/seek thrashing), `/proc` resource monitor, per-worker `nice` / `SCHED_IDLE` / `ioprio`, and preservation of Unix `+x` permissions.
-- **Native desktop UI** (`gui.py`, `shellmenu.py`, `jobs.py`): automatic Dark/Light theme (KDE `kdeglobals` / GNOME `gsettings`) with live `☾/☀` and `DE/EN` toggles, native `kdialog` / `zenity` file pickers, KDE Dolphin ServiceMenu + GNOME Nautilus script, and XDG autostart (`~/.config/autostart`).
-- **Full test suite**: all tests pass on Linux (`pytest tests -q`, Fedora 45, KDE, btrfs, Python 3.15).
+### 2. Clone & add to your application launcher
+
+```sh
+git clone https://github.com/ezgerazer/InPlace_UnPack-forlinux.git
+cd InPlace_UnPack-forlinux
+./install-linux.sh
+```
+
+This installs (per-user, no `sudo`):
+- App menu launcher: `~/.local/share/applications/inplace-unpack.desktop` + icon
+- GUI command: `~/.local/bin/inplace-unpack`
+- CLI command: `~/.local/bin/inplace-unpack-cli`
+
+*(Make sure `~/.local/bin` is in your `PATH`, or start **Inplace-Unpack** directly from your desktop app launcher.)*
+
+To remove the launcher entries again:
+
+```sh
+./install-linux.sh --uninstall
+```
+
+Or run directly without installing:
+
+```sh
+python3 app_gui.py
+```
+
+---
 
 ## How to use it
 
-1. Pick the ZIP (or the first part, `.zip.001`) and a target folder. Or right-click the ZIP in Explorer.
-2. Choose a mode if you want. Balanced is fine for most people.
-3. Click **Check**. It tells you if it fits and what, if anything, is wrong.
-4. Click **Start extracting** and confirm once.
-5. You can pause any time. Next time you open the program it carries on by itself.
+### Graphical interface (`inplace-unpack`)
 
-There's also a command line version:
+1. Pick the `.zip` (or `.zip.001` for split archives) and a target folder — or right-click the ZIP in Dolphin /
+   Files if you enabled the context-menu option, or paste a path / `file://` URI directly.
+2. Choose an extraction mode (**Safe**, **Balanced**, or **Performance**). *Balanced* is great for everyday use.
+3. Click **Check** (`F5`). It verifies the archive and tells you whether peak disk usage fits.
+4. Click **Start extracting** (`Ctrl+Enter`) and confirm once.
+5. Pause any time — the next time you open the app, it picks up right where it left off.
 
-```powershell
-inplace-unpack-cli ARCHIVE.zip TARGET_FOLDER [--check] [--yes] [--mode safe|balanced|performance]
-                   [--config settings.json] [--threads N] [--sync-mb N] [--max-cpu PCT]
+### Command line (`inplace-unpack-cli`)
+
+```sh
+inplace-unpack-cli ARCHIVE.zip TARGET_FOLDER [--check] [--yes] [--mode safe|balanced|performance] \
+                   [--config settings.json] [--threads N] [--sync-mb N] [--max-cpu PCT] \
                    [--overwrite] [--delete-archive] [--name-encoding cp850] [--ignore-space]
-inplace-unpack-cli status ARCHIVE.zip      # what an interrupted run left behind
-inplace-unpack-cli bench [--size-mb 1024]  # try the modes on your own disk
+
+inplace-unpack-cli status ARCHIVE.zip       # inspect an interrupted run's journal
+inplace-unpack-cli bench [--size-mb 1024]   # benchmark all modes on your real disk (/var/tmp)
 ```
 
-Exit codes: `0` done, `1` cancelled, `2` check failed, `3` stopped but resumable.
+Exit codes: `0` done, `1` cancelled by user, `2` pre-flight check failed, `3` stopped cleanly (resumable).
+
+---
 
 ## Modes
 
-| | Safe | Balanced (default) | Performance |
+| | Safe | Balanced *(default)* | Performance |
 |---|---|---|---|
-| Idea | as careful as possible | fast, PC stays usable | as fast as it gets |
-| Worker threads | 1 | 1 (+1 helper for big files) | 2 (+ helpers) |
-| CPU priority | below normal | below normal | normal |
-| Journal and space release every | 64 MB | 1 GB | 2 GB |
-| Re-reads every file to verify it | yes | no | no |
-| RAM it may use | up to 256 MB | up to 512 MB | up to 1 GB |
-| Damaged entry | stops | keeps it, continues | keeps it, continues |
+| **Goal** | maximum verification | fast, desktop stays responsive | maximum throughput |
+| **Worker threads** | 1 | 1 (+ decompression helper for large files) | up to 4 on Linux (+ helpers) |
+| **Worker CPU priority** | `nice +5` | `nice +5` | `nice 0` (normal) |
+| **Journal & hole-punch every** | 64 MB | 1 GB | 2 GB |
+| **Re-reads every file to verify CRC** | yes | no | no |
+| **RAM budget** | up to 256 MB | up to 512 MB | up to 1 GB |
+| **Damaged entry (CRC error)** | stops | keeps unchanged + logs in `<zip>.damaged.txt` | keeps unchanged + logs |
 
-No matter which mode you pick, a piece of the ZIP is only freed after the file and the journal entry are on
-disk. There's no setting to turn that off.
+Regardless of mode, archive bytes are **never** released before the extracted file and the journal commit have
+been flushed to disk (`fsync`).
+
+---
 
 ## Settings
 
-Everything is under **Advanced settings** in the app, or in a JSON file you pass with `--config`
-(see [examples/settings.example.json](examples/settings.example.json)). The app keeps its settings in
-`%APPDATA%\Inplace-Unpack\settings.json`. Values outside sensible limits get clamped.
+All options are available under **Advanced settings** in the GUI or via `--config settings.json`
+(see [examples/settings.example.json](examples/settings.example.json)). On Linux, settings are stored in
+`${XDG_CONFIG_HOME:-~/.config}/Inplace-Unpack/settings.json`. Out-of-range values are automatically clamped to
+safe limits.
 
-The ones you'll most likely care about:
+Key settings:
 
-- `max_write_mb_s` caps the write speed. Best option if you want to keep using the PC while it runs.
-- `priority` (idle / below_normal / normal) only affects the worker threads; the window stays snappy.
-- `sync_interval_mb` sets how often the journal is written and space is released.
-- `keep_damaged` decides whether a damaged entry stops the run or is kept and listed.
-- `delete_parts` decides whether finished parts of a split ZIP are deleted.
-- `auto_resume` / `resume_after_reboot` control what happens after an interruption.
-- `explorer_menu` adds or removes the right-click entry.
+- `max_write_mb_s` — caps write throughput so other apps keep full disk responsiveness.
+- `priority` (`idle` / `below_normal` / `normal`) & `background_mode` (Linux `ioprio` idle class) — applied
+  only to worker threads so the GUI thread stays responsive.
+- `sync_interval_mb` — how often the journal commits and holes are punched into the ZIP.
+- `keep_damaged` — keep CRC-damaged entries and list them in `<zip>.damaged.txt`, or stop immediately.
+- `delete_parts` — delete finished `.zip.001, .002, ...` parts of split archives.
+- `auto_resume` / `resume_after_reboot` — automatic resume and temporary `~/.config/autostart` entry.
+- `explorer_menu` — per-user right-click action in KDE Dolphin / GNOME Files.
 
-The rest (threads, CPU cap, RAM budget, temp folder, flush interval, ...) is explained right next to each
-option in the app.
+---
 
 ## Requirements
 
-- Windows 10 or 11, 64-bit
-- The ZIP has to be on an NTFS or ReFS drive (FAT32 and exFAT don't support sparse files). Split ZIPs work
-  without that, since whole parts are deleted.
-- Target folder on the same drive as the ZIP, otherwise freeing space doesn't help.
-- Roughly *(unpacked size − ZIP size)* free, plus the small reserve the check shows you.
-- From source: Python 3.11 or newer.
+- **Linux** (64-bit or 32-bit, e.g. Fedora, Ubuntu/Debian, Arch, openSUSE) with **Python 3.11+** and `tkinter`
+  *(Windows 10/11 remains supported in the same codebase as well)*.
+- Archive located on a filesystem supporting `FALLOC_FL_PUNCH_HOLE`: **btrfs, ext4, xfs, f2fs, zfs, bcachefs,
+  ntfs3, or tmpfs** (FAT32 and exFAT do *not* support hole punching, except for split `.zip.001` archives where
+  whole parts are deleted).
+- Target folder on the **same filesystem / Btrfs storage pool** as the ZIP so freed blocks benefit the target.
+- Free space of roughly *(unpacked size − ZIP size)* plus the safety reserve shown by **Check**.
 
-## How fast is it?
+## Performance
 
-On my test PC (6-core CPU, cheap SATA SSD) it ran at 60–80 MB/s and used under 10 % CPU. The disk is the
-limit, not the processor, so more threads mostly don't help on a SATA SSD. A faster drive, or having the ZIP
-and the target on two different drives, makes a much bigger difference. Details and numbers:
-[docs/Performance.md](docs/Performance.md). Run `inplace-unpack-cli bench` to test your own disk.
+Measured on Fedora 45 (`btrfs` with `compress=zstd:1` on NVMe, Python 3.15):
 
-## Safety
+- **Safe / Balanced** (1 worker + pipeline): **~235–245 MB/s** (~3% total CPU)
+- **Performance** (4 workers with dedicated read handles): **~525 MB/s** (~10% total CPU)
 
-- No admin rights, no network access, no telemetry.
-- Defender stays on. The tool never asks for antivirus exceptions.
-- Every output path is cleaned up and checked so nothing lands outside the target folder; junctions are never followed.
-- Nobody else can write to the ZIP while it's being unpacked.
-- The journal (`<zip>.unzip-progress`) is replaced atomically and has a checksum.
+Run `inplace-unpack-cli bench --size-mb 1024` to measure your own drive (automatically uses `/var/tmp` when
+`/tmp` is a RAM-backed `tmpfs`).
 
-More in [docs/Reliability.md](docs/Reliability.md) and [Security.md](Security.md).
+---
 
-## Limitations
+## Safety & Limitations
 
-- Not supported: encrypted ZIPs, Deflate64 (Windows Explorer uses it for some big files), 7z, RAR, tar.gz,
-  and WinZip-style spanned archives (`.z01, .z02, ..., .zip`). They're rejected before anything changes.
-  Multi-part 7z/RAR can't be done safely: those formats keep important data at the end or compress "solid".
-- With System Restore points on the drive, Windows may hold on to the freed space. The tool notices that and
-  stops cleanly.
-- Cheap USB sticks that ignore flush commands can lose data on power loss, whatever the software does.
-- Explorer keeps showing the ZIP's old size. Check "Size on disk" in its properties to see it shrink.
-- The release .exe isn't signed yet, so expect SmartScreen warnings and the occasional false positive from
-  an antivirus (common with PyInstaller apps).
+- **Path safety**: Every archive path is sanitized (no `..` zip-slip, control characters, or overlong >255-byte
+  UTF-8 names). Directory symlinks inside the target folder are never followed, and symlinks are never `chmod`ed.
+- **Exclusive archive lock**: `SparseFile` takes an `flock(LOCK_EX | LOCK_NB)` advisory lock while punching
+  holes so two instances cannot corrupt each other.
+- **Unsupported formats**: Encrypted ZIPs, Deflate64, 7z, RAR, `tar.*`, and `.z01/.z02` spanned archives are
+  refused cleanly during the pre-flight check before anything is modified.
+- **Btrfs / ZFS snapshots & reflinks**: If a filesystem snapshot (e.g. Snapper / Timeshift) or `cp --reflink`
+  copy still references the ZIP's extents, punching holes in the ZIP cannot reclaim physical disk blocks until
+  the snapshot/reflink is removed. If free space runs low, Inplace-Unpack pauses cleanly in a resumable state.
+- **Logical vs. allocated size**: `ls -lh` continues to show the ZIP's original logical length while it is
+  sparse. Use `du -h ARCHIVE.zip` (or `stat -c '%b*512'`) to see its real on-disk block usage shrink toward zero.
 
-## Building it yourself
+---
 
-Double-click `build.cmd`. It sets up a local Python environment (`.venv`), installs the build tools, runs the
-tests and drops `Inplace-Unpack.exe` and `inplace-unpack-cli.exe` into `dist\`. You need Python 3.11+.
-Use `build.cmd -SkipTests` to skip the roughly 4-minute test run.
+## Running the tests
 
-By hand:
-
-```powershell
-python -m pip install -r requirements-dev.txt
-python -m pytest tests -q
-.\build.ps1
+```sh
+python3 -m venv .venv
+.venv/bin/pip install pytest
+.venv/bin/python -m pytest tests -q
 ```
 
-If Inno Setup 6 is installed you also get an installer. Signing is optional, see [docs/Signing.md](docs/Signing.md).
-The big-file test (over 4 GB, needs about 10 GB free) runs with `$env:INPLACE_UNPACK_LARGE="1"; python -m pytest tests/test_zip64.py`.
+To also run the >4 GB ZIP64 test (requires ~10 GB of free space):
 
-## Contributing
+```sh
+INPLACE_UNPACK_LARGE=1 .venv/bin/python -m pytest tests/test_zip64.py -q
+```
 
-Bug reports and pull requests are welcome, see [Contributing.md](Contributing.md).
+## License & Credits
 
-## License
-
-MIT, see [LICENSE](LICENSE). Uses only the Python standard library; the .exe is built with PyInstaller,
-whose license explicitly allows that for any project.
+MIT, see [LICENSE](LICENSE).
+Original concept and Windows implementation by [HaswellHD](https://github.com/HaswellHD/InPlace_UnPack); Linux
+filesystem engine, performance optimizations, and Linux desktop UI maintained in this repository.

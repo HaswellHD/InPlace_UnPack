@@ -1,15 +1,31 @@
 #!/bin/sh
-# Installs Inplace-Unpack for the current user on Linux (no root needed):
-# launcher scripts in ~/.local/bin, app-menu entry and icon.
-# Requires: python3 (>= 3.11) and tkinter (Fedora: sudo dnf install python3-tkinter).
+# Installs (or uninstalls with --uninstall) Inplace-Unpack for the current user on Linux:
+# launcher scripts in ~/.local/bin, app-menu entry and icon (no root needed).
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$HOME/.local/bin"
-APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
+APPS="$DATA/applications"
+ICONS="$DATA/icons/hicolor/512x512/apps"
+
+if [ "${1:-}" = "--uninstall" ]; then
+    rm -f "$BIN/inplace-unpack" "$BIN/inplace-unpack-cli" \
+          "$APPS/inplace-unpack.desktop" "$ICONS/inplace-unpack.png" \
+          "$DATA/kio/servicemenus/inplace-unpack.desktop" \
+          "$DATA/nautilus/scripts/Inplace-Unpack" \
+          "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/inplace-unpack-resume.desktop"
+    update-desktop-database "$APPS" 2>/dev/null || true
+    gtk-update-icon-cache -f -t "$(dirname "$(dirname "$ICONS")")" 2>/dev/null || true
+    command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 >/dev/null 2>&1 || true
+    echo "Uninstalled Inplace-Unpack launcher entries."
+    exit 0
+fi
 
 if ! python3 -c "import tkinter" 2>/dev/null; then
-    echo "tkinter missing. Fedora: sudo dnf install python3-tkinter | Debian/Ubuntu: sudo apt install python3-tk" >&2
+    echo "tkinter missing. Install it first:" >&2
+    echo "  Fedora:        sudo dnf install python3-tkinter" >&2
+    echo "  Debian/Ubuntu: sudo apt install python3-tk" >&2
+    echo "  Arch Linux:    sudo pacman -S tk" >&2
     exit 1
 fi
 
@@ -40,4 +56,4 @@ EOF
 update-desktop-database "$APPS" 2>/dev/null || true
 gtk-update-icon-cache -f -t "$(dirname "$(dirname "$ICONS")")" 2>/dev/null || true
 command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 >/dev/null 2>&1 || true
-echo "Installed. Start 'Inplace-Unpack' from the app menu or run: inplace-unpack"
+echo "Installed. Start 'Inplace-Unpack' from your app launcher or run: inplace-unpack"
