@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 
-from . import sysinfo
+from . import i18n, sysinfo
 
 MODES = ("safe", "balanced", "performance")
 DEFAULT_MODE = "balanced"
@@ -28,7 +28,7 @@ class Settings:
     auto_threads: bool = True
     max_threads: int = 1            # used when auto_threads is off
     max_cpu_percent: int = 75       # of the whole machine; enforced by a throttle
-    background_mode: bool = False   # Windows background mode: low I/O + memory priority
+    background_mode: bool = False   # low I/O priority (Windows background / Linux idle ioprio)
     priority: str = "below_normal"  # CPU priority of the worker threads
     # --- RAM -----------------------------------------------------------------
     max_ram_mb: int = 512           # buffers + small files held in RAM
@@ -48,18 +48,13 @@ class Settings:
     resume_after_reboot: bool = False  # register a per-user autostart entry while a job runs
     keep_damaged: bool = True       # entry with wrong CRC: keep its bytes, list it, continue
     delete_parts: bool = True       # split ZIP (.zip.001 ...): delete each part once extracted
-    explorer_menu: bool = False     # "Inplace-Unpack" entry in the Explorer right-click menu
+    explorer_menu: bool = False     # right-click entry in file manager
     # --- other -------------------------------------------------------------------
     auto_optimize: bool = True      # adapt workers to RAM pressure and free space at runtime
     show_monitor: bool = True
-    language: str = "en"
+    language: str = field(default_factory=i18n.default_lang)
 
 
-# Presets are based on measurements (see docs/Performance.md): on a typical
-# SATA SSD more worker threads did NOT make extraction faster, and Windows
-# background mode made other programs wait *longer* (priority inversion on
-# flushes). Regular flushing every 64 MB was the most effective way to avoid
-# "hangs" and to keep the PC responsive.
 PRESETS = {
     "safe": dict(auto_threads=False, max_threads=1, max_cpu_percent=50, background_mode=False,
                  priority="below_normal", max_ram_mb=256, sync_interval_mb=64,
@@ -69,10 +64,10 @@ PRESETS = {
                      priority="below_normal", max_ram_mb=512, sync_interval_mb=1024,
                      flush_interval_mb=64, verify_written=False, max_temp_gb=8.0,
                      keep_damaged=True),
-    "performance": dict(auto_threads=True, max_threads=2, max_cpu_percent=100,
-                        background_mode=False, priority="normal", max_ram_mb=1024,
-                        sync_interval_mb=2048, flush_interval_mb=64, verify_written=False,
-                        max_temp_gb=16.0, keep_damaged=True),
+    "performance": dict(auto_threads=True, max_threads=4 if os.name != "nt" else 2,
+                        max_cpu_percent=100, background_mode=False, priority="normal",
+                        max_ram_mb=1024, sync_interval_mb=2048, flush_interval_mb=64,
+                        verify_written=False, max_temp_gb=16.0, keep_damaged=True),
 }
 LANGUAGES = ("en", "de")
 CHOICES = {"priority": PRIORITIES, "language": LANGUAGES}
@@ -140,13 +135,9 @@ def effective_threads(s: Settings) -> int:
     n = os.cpu_count() or 1
     if not s.auto_threads:
         return s.max_threads
-    # The disk, not the CPU, is the limit (decompression runs at >1 GB/s per
-    # core). Measured: 2+ workers were not faster on a SATA SSD, even for
-    # thousands of small files, but disturbed other programs more. Large
-    # entries still use 2 threads each (decompress + write pipeline).
     if s.mode in ("safe", "balanced"):
         return 1
-    return min(2, n)
+    return min(4 if os.name != "nt" else 2, n)
 
 
 def ram_budget(s: Settings) -> int:
@@ -182,8 +173,6 @@ def load(path: str | None = None) -> Settings:
     for k, v in data.items():
         if k in known:
             setattr(s, k, v)
-    # 0.3.0 shipped Performance with a 256 MB flush interval, which caused stalls;
-    # move users who kept that old default to the new one
     if s.mode == "performance" and s.flush_interval_mb == 256:
         s.flush_interval_mb = PRESETS["performance"]["flush_interval_mb"]
     return validate(s)[0]

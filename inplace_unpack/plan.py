@@ -81,7 +81,7 @@ class Plan:
     journal_info: dict | None = None
     split: bool = False             # archive is a split ZIP (name.zip.001, .002, ...)
     part_sizes: list | None = None  # sizes of all parts (also of parts already deleted)
-    punch: bool = True              # holes can be punched (NTFS/ReFS sparse files)
+    punch: bool = True              # holes can be punched (NTFS/ReFS or btrfs/ext4/xfs/...)
 
     @property
     def ok(self) -> bool:
@@ -135,6 +135,12 @@ def releasable(sizes: list[int] | None, offset: int, unit: int, punch: bool) -> 
             break
         pos += sz
     return freed
+
+
+def _same_target_dir(a: str, b: str) -> bool:
+    if os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b)):
+        return True
+    return os.path.realpath(a) == os.path.realpath(b)
 
 
 def analyze(archive: str, target: str, *, overwrite: bool = False,
@@ -196,7 +202,7 @@ def analyze(archive: str, target: str, *, overwrite: bool = False,
     if j:
         p.resuming = True
         p.journal_info = j
-        if os.path.normcase(j["target"]) != os.path.normcase(target):
+        if not _same_target_dir(j["target"], target):
             probs.add("journal_other_target", j["target"])
             return finish()
         p.name_encoding = j.get("name_encoding")
@@ -235,7 +241,7 @@ def analyze(archive: str, target: str, *, overwrite: bool = False,
             p.entries.append(e)
             p.total_bytes += e.size
             if renamed and parts:
-                p.renamed.append((info.filename, "\\".join(parts)))
+                p.renamed.append((info.filename, os.sep.join(parts)))
             if idx < p.done:
                 continue  # already extracted; its local header is gone
             p.remaining_bytes += e.size
@@ -259,7 +265,10 @@ def analyze(archive: str, target: str, *, overwrite: bool = False,
                 probs.add("overlap", info.filename)
 
     # --- output paths ------------------------------------------------------------
-    protected = {os.path.normcase(x) for x in (archive, jpath, jpath + ".tmp", *src.paths)}
+    raw_protected = (archive, jpath, jpath + ".tmp", *src.paths)
+    protected = ({os.path.normcase(x).casefold() for x in raw_protected}
+                 | {os.path.realpath(x).casefold() for x in raw_protected})
+    real_target = os.path.realpath(target)
     for e in p.entries[p.done:]:
         out = e.out_path(target)
         if out is None:
@@ -267,8 +276,11 @@ def analyze(archive: str, target: str, *, overwrite: bool = False,
         if os.path.commonpath([target, out]) != target:  # paranoia; names.py prevents it
             probs.add("path_escape", e.info.filename)
             continue
-        if os.path.normcase(out) in protected or any(
-                x.startswith(os.path.normcase(out) + os.sep) for x in protected):
+        out_cf = os.path.normcase(out).casefold()
+        real_out_cf = os.path.join(real_target, *e.parts).casefold() if e.parts else out_cf
+        if (out_cf in protected or real_out_cf in protected
+                or any(x.startswith(out_cf + os.sep) or x.startswith(real_out_cf + os.sep)
+                       for x in protected)):
             probs.add("collides_archive", e.info.filename)
             continue
         if p.resuming:
@@ -287,7 +299,7 @@ def analyze(archive: str, target: str, *, overwrite: bool = False,
         probs.items["conflicts"][1]["count"] = len(p.conflicts)
 
     # --- space -------------------------------------------------------------------
-    p.same_volume = winfs.same_volume(probe, target)
+    p.same_volume = winfs.same_pool(probe, target)
     p.cluster = winfs.cluster_size(target)
     a_cluster = winfs.cluster_size(probe)
     fs = winfs.volume_info(probe)[0].upper() if p.punch else ""
@@ -309,14 +321,14 @@ def analyze(archive: str, target: str, *, overwrite: bool = False,
         # bytes) can be in flight at the same time.
         frees = p.same_volume and (not p.split or s.delete_parts)
         base = releasable(p.part_sizes, rest[0].start, p.punch_unit, p.punch)
-        sizes = [round_up(e.size, p.cluster) + 1024 for e in rest]  # + MFT record
+        sizes = [round_up(e.size, p.cluster) + 1024 for e in rest]  # + inode / MFT record
         written = peak = freed = pending = 0
         for k, e in enumerate(rest):
             written += sizes[k]
-            ahead, j = 0, k + 1
-            while j < len(rest) and j - k < threads and ahead + sizes[j] <= max_temp:
-                ahead += sizes[j]
-                j += 1
+            ahead, j_idx = 0, k + 1
+            while j_idx < len(rest) and j_idx - k < threads and ahead + sizes[j_idx] <= max_temp:
+                ahead += sizes[j_idx]
+                j_idx += 1
             peak = max(peak, written + ahead - freed)
             pending += e.end - e.start
             if pending >= sync_bytes and frees:

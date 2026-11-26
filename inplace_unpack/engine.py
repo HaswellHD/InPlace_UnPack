@@ -15,13 +15,16 @@ releases again. The archive bytes of an entry are never released before the
 extracted file is safely on disk.
 
 Parallelism: up to N worker threads extract consecutive entries at the same
-time. Commits only ever cover the *contiguous* prefix of finished entries, so
+time, each with its own independent archive reader handle so workers do not
+contend on ZipFile locks or invalidate each other's read-ahead buffers.
+Commits only ever cover the *contiguous* prefix of finished entries, so
 the rule above still holds. Large entries are streamed through a two-stage
 pipeline (decompress thread -> bounded queue -> writer), small entries can be
 decompressed completely in RAM and written with one write call.
 """
 from __future__ import annotations
 
+import errno
 import os
 import queue
 import shutil
@@ -43,6 +46,12 @@ CHUNK = 256 * 1024          # measured: faster than 1 MiB (fits CPU caches)
 PIPELINE_MIN = 8 * MiB     # entries at least this big use the decompress/write pipeline
 SPACE_GUARD = 32 * MiB
 COMMIT_BYTES: int | None = None  # tests only: overrides settings.sync_interval_mb
+
+if os.name != "nt":
+    _UMASK = os.umask(0o022)
+    os.umask(_UMASK)
+else:
+    _UMASK = 0
 
 
 class RunStopped(Exception):
@@ -154,14 +163,23 @@ RELEASE_PAUSE = 0.02        # seconds between steps, lets other disk I/O through
 
 
 def _open_archive(src: source.ArchiveSource, name_encoding):
-    # FILE_FLAG_SEQUENTIAL_SCAN: Windows reads ahead and does not keep the
-    # whole archive in the file cache -> less memory pressure on the system.
+    # Sequential read-ahead (FILE_FLAG_SEQUENTIAL_SCAN on Windows,
+    # POSIX_FADV_SEQUENTIAL on Linux) + 256 KiB buffering.
     f = src.open()
     try:
         return zipfile.ZipFile(f, "r", metadata_encoding=name_encoding), f
     except BaseException:
         f.close()
         raise
+
+
+def _copy_to_local_part(part: str, local_part: str, durable: bool) -> None:
+    shutil.copyfile(part, local_part)
+    if durable:
+        with open(local_part, "rb") as dst:
+            os.fsync(dst.fileno())
+    shutil.copystat(part, local_part)
+    os.remove(part)
 
 
 def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
@@ -178,8 +196,6 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
     unit = plan.punch_unit
     threads = settingsmod.effective_threads(s)
     sync_bytes = COMMIT_BYTES if COMMIT_BYTES is not None else s.sync_interval_mb * MiB
-    # Measured on a SATA SSD: 4 MiB blocks, deeper read-ahead, pre-sized output files and
-    # no intermediate flushes were all slower (65-87 MB/s vs. 115 MB/s), so none are used.
     chunk = CHUNK
     flush_bytes = s.flush_interval_mb * MiB  # overlapped flushes beat one big flush at the end
     max_temp = int(s.max_temp_gb * 1024 ** 3)
@@ -238,7 +254,8 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
                     except FileExistsError:
                         pass
                     st = os.lstat(lp)
-                if getattr(st, "st_file_attributes", 0) & winfs.FILE_ATTRIBUTE_REPARSE_POINT:
+                if (stat.S_ISLNK(st.st_mode)
+                        or (getattr(st, "st_file_attributes", 0) & winfs.FILE_ATTRIBUTE_REPARSE_POINT)):
                     raise RunStopped("link_in_target", path=cur)
                 if not stat.S_ISDIR(st.st_mode):
                     raise RunStopped("conflict_type", name=cur)
@@ -258,12 +275,12 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
     damaged_report = archive + ".damaged.txt"
 
     def open_entry(e, z, nocrc: bool):
-        src = z.open(e.info)
+        src_entry = z.open(e.info)
         if nocrc:
             # Keep a damaged entry exactly as stored: zipfile skips the CRC check
             # when the expected CRC is None (CPython ZipExtFile._update_crc).
-            src._expected_crc = None
-        return src
+            src_entry._expected_crc = None
+        return src_entry
 
     def note_damaged(e) -> None:
         with damaged_lock:
@@ -285,13 +302,13 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
         def producer():
             sysinfo.apply_thread_priority(s.priority, s.background_mode)
             try:
-                with open_entry(e, z, nocrc) as src:
+                with open_entry(e, z, nocrc) as src_entry:
                     while True:
                         if (stop_local.is_set() or abort.is_set()
                                 or (cancel is not None and cancel.is_set())):
                             q.put(_Abort())
                             return
-                        block = src.read(chunk)
+                        block = src_entry.read(chunk)
                         if not block:
                             break
                         q.put(block)
@@ -307,7 +324,7 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
 
         def bg_flush(fd):
             try:
-                os.fsync(fd)
+                winfs.fdatasync(fd)
             except OSError:
                 pass  # the final fsync in extract() reports real errors
 
@@ -331,7 +348,7 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
                     # in the background while the next block is written; if the disk has not
                     # finished the previous one yet we wait for it. So writing never gets
                     # more than one block ahead of the disk: steady progress instead of
-                    # bursts into the Windows cache followed by long stalls.
+                    # bursts into the page cache followed by long stalls.
                     if flusher is not None:
                         flusher.join()
                     dst.flush()
@@ -351,11 +368,13 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
             t.join()
         return written
 
-    def verify(path: str, crc: int) -> None:
+    def verify(path: str, crc: int, drop: bool) -> None:
         c = 0
         with open(path, "rb") as f:
-            while chunk := f.read(4 * MiB):
-                c = zlib.crc32(chunk, c)
+            while blk := f.read(4 * MiB):
+                c = zlib.crc32(blk, c)
+            if drop:
+                winfs.drop_cache(f.fileno())
         if c != crc:
             raise zipfile.BadZipFile("verification of the written file failed")
 
@@ -383,6 +402,8 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
         part = (winfs.long_path(os.path.join(temp_dir, f"iu-{fp12}-{e.index}.part"))
                 if temp_dir else local_part)
         held = 0
+        will_verify = s.verify_written and not nocrc
+        large = e.size >= PIPELINE_MIN
         try:
             data = None
             use_ram = (s.auto_ram_disk and 0 < e.size <= small_limit
@@ -390,21 +411,21 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
                        and budget.try_take(e.size))
             if use_ram:
                 held = e.size
-                with open_entry(e, z, nocrc) as src:
-                    data = src.read()  # CRC checked by zipfile
+                with open_entry(e, z, nocrc) as src_entry:
+                    data = src_entry.read()  # CRC checked by zipfile
                 check_abort()
             with open(part, "wb") as dst:
                 if data is not None:
                     fault("mid_write", e.index)
                     write_all(dst, data, e.index)
                     written = len(data)
-                elif e.size >= PIPELINE_MIN:
+                elif large:
                     written = stream(e, z, dst, nocrc)
                 else:
                     written = 0
                     first = True
-                    with open_entry(e, z, nocrc) as src:
-                        while block := src.read(chunk):
+                    with open_entry(e, z, nocrc) as src_entry:
+                        while block := src_entry.read(chunk):
                             dst.write(block)
                             written += len(block)
                             live[e.index] = written
@@ -418,29 +439,40 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
                 dst.flush()
                 if durable:
                     os.fsync(dst.fileno())
+                if large and not will_verify:
+                    winfs.drop_cache(dst.fileno())
             if held:
                 budget.give(held)
                 held = 0
                 data = None
-            if s.verify_written and not nocrc:
-                verify(part, e.info.CRC)
+            if will_verify:
+                verify(part, e.info.CRC, large)
+            if os.name != "nt" and e.info.create_system == 3:
+                unix_exec = (e.info.external_attr >> 16) & 0o111
+                if unix_exec:
+                    try:
+                        cur_mode = stat.S_IMODE(os.lstat(part).st_mode)
+                        os.chmod(part, cur_mode | (unix_exec & ~_UMASK))
+                    except OSError:
+                        pass
             try:
                 t = time.mktime(e.info.date_time + (0, 0, -1))
                 os.utime(part, (t, t))
             except (OverflowError, ValueError, OSError):
                 pass
-            if not temp_same_vol:  # temp dir on another drive: copy, then rename
-                with open(part, "rb") as src, open(local_part, "wb") as dst:
-                    shutil.copyfileobj(src, dst, 4 * MiB)
-                    dst.flush()
-                    if durable:
-                        os.fsync(dst.fileno())
-                shutil.copystat(part, local_part)
-                os.remove(part)
+            if not temp_same_vol:  # temp dir on another drive/subvolume: copy, then rename
+                _copy_to_local_part(part, local_part, durable)
                 part = local_part
-            if os.path.lexists(final):
-                os.chmod(final, stat.S_IWRITE)  # clear read-only so replace works
-            os.replace(part, final)
+            if os.name == "nt" and os.path.lexists(final):
+                os.chmod(final, stat.S_IWRITE)  # clear Windows read-only attribute so replace works
+            try:
+                os.replace(part, final)
+            except OSError as ex:
+                if ex.errno != errno.EXDEV or part == local_part:
+                    raise
+                _copy_to_local_part(part, local_part, durable)
+                part = local_part
+                os.replace(part, final)
         except SimulatedCrash:
             raise
         except BaseException:
@@ -457,6 +489,21 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
 
     src = source.ArchiveSource(archive, state)
     z, zf = _open_archive(src, plan.name_encoding)
+    worker_tls = threading.local()
+    extra_archives: list[tuple[zipfile.ZipFile, object]] = []
+    extra_lock = threading.Lock()
+
+    def get_worker_zip() -> zipfile.ZipFile:
+        if threads <= 1:
+            return z
+        wz = getattr(worker_tls, "z", None)
+        if wz is None:
+            wz, wzf = _open_archive(src, plan.name_encoding)
+            with extra_lock:
+                extra_archives.append((wz, wzf))
+            worker_tls.z = wz
+        return wz
+
     frees = not plan.split or s.delete_parts
     sp = src.releaser(plan.punch) if frees else None
     released = 0
@@ -554,7 +601,7 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
 
     def task(e):
         try:
-            extract(e, z)
+            extract(e, get_worker_zip())
         except SimulatedCrash:
             abort.set()
             raise
@@ -644,6 +691,9 @@ def run(plan: Plan, on_progress: Callable[[Progress], None] | None = None,
         pool.shutdown(wait=True, cancel_futures=True)
         if sp is not None:
             sp.close()
+        for wz, wzf in extra_archives:
+            wz.close()
+            wzf.close()
         z.close()
         zf.close()
         sysinfo.end_thread_background()

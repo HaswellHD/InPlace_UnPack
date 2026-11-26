@@ -11,6 +11,8 @@ sys.path.insert(0, ROOT)
 os.environ["INPLACE_UNPACK_NO_JOBS"] = "1"  # never touch the real job list / autostart
 import tempfile  # noqa: E402
 os.environ["APPDATA"] = tempfile.mkdtemp(prefix="iu-appdata-")  # never touch real settings
+os.environ["XDG_CONFIG_HOME"] = os.environ["APPDATA"]
+os.environ["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="iu-xdgdata-")
 
 from inplace_unpack import engine, plan as planmod, winfs  # noqa: E402
 

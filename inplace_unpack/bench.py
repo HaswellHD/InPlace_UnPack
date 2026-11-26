@@ -65,7 +65,7 @@ def run_one(src: str, workdir: str, mode: str, settings: st.Settings | None = No
             raise RuntimeError(f"plan failed: {p.problems}")
         samples = []
         sampler = sysinfo.Sampler()
-        last = [0.0]
+        last = [time.monotonic()]
 
         def prog(pr):
             now = time.monotonic()
@@ -73,6 +73,8 @@ def run_one(src: str, workdir: str, mode: str, settings: st.Settings | None = No
                 last[0] = now
                 samples.append(sampler.sample())
         r = engine.run(p, prog, settings=s)
+        if not samples or time.monotonic() - last[0] >= 0.05:
+            samples.append(sampler.sample())
         cpu = [x["proc_cpu"] for x in samples] or [0.0]
         sys_cpu = [x["sys_cpu"] for x in samples] or [0.0]
         wr = [x["write_bps"] for x in samples] or [0.0]
@@ -90,9 +92,22 @@ def run_one(src: str, workdir: str, mode: str, settings: st.Settings | None = No
                 pass
 
 
+def _default_bench_dir() -> str:
+    """Prefer real storage over RAM-backed /tmp (tmpfs) on Linux distributions like Fedora."""
+    d = tempfile.gettempdir()
+    if os.name != "nt":
+        try:
+            if winfs.volume_info(d)[0].lower() == "tmpfs" and os.path.isdir("/var/tmp"):
+                if winfs.volume_info("/var/tmp")[0].lower() != "tmpfs":
+                    return "/var/tmp"
+        except OSError:
+            pass
+    return d
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="inplace-unpack bench")
-    ap.add_argument("--dir", default=None, help="working folder (NTFS); default: %%TEMP%%")
+    ap.add_argument("--dir", default=None, help="working folder (sparse-capable disk)")
     ap.add_argument("--size-mb", type=int, default=1024)
     ap.add_argument("--small", type=int, default=3000, help="number of small files")
     ap.add_argument("--runs", type=int, default=1)
@@ -102,14 +117,20 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     modes = [m for m in a.modes.split(",") if m in st.MODES]
 
-    base = a.dir or tempfile.gettempdir()
+    base = a.dir or _default_bench_dir()
     work = tempfile.mkdtemp(prefix="inplace-unpack-bench-", dir=base)
     need = a.size_mb * MiB * 3
     if winfs.free_bytes(work) < need:
+        shutil.rmtree(work, ignore_errors=True)
         print(f"Not enough free space in {work}: need ~{fmt_bytes(need)}")
         return 2
     try:
+        fs_name = winfs.volume_info(work)[0]
+    except OSError:
+        fs_name = "?"
+    try:
         src = os.path.join(work, "source.zip")
+        print(f"Benchmark folder: {work} ({fs_name})")
         print(f"Creating test archive ({a.size_mb} MB, {a.small} small files, {a.compression}) ...")
         total = make_archive(src, a.size_mb, a.small,
                              zipfile.ZIP_DEFLATED if a.compression == "deflate" else zipfile.ZIP_STORED)
@@ -133,7 +154,7 @@ def main(argv=None) -> int:
         print("\nCPU = this process, % of all cores. Results depend heavily on the disk.")
         if a.json:
             with open(a.json, "w", encoding="utf-8") as f:
-                json.dump({"cpu_count": os.cpu_count(), "results": results}, f, indent=2)
+                json.dump({"cpu_count": os.cpu_count(), "filesystem": fs_name, "results": results}, f, indent=2)
         return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)

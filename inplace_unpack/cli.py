@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
-import time
 
-from . import __version__, engine, journal, plan as planmod
+from . import __version__, engine, i18n, journal, plan as planmod
 from . import settings as st
 from .i18n import fmt_bytes, fmt_duration, msg, t
 
@@ -81,6 +81,7 @@ def main(argv=None) -> int:
     ap.add_argument("--version", action="version", version=__version__)
     a = ap.parse_args(argv)
     s = build_settings(a)
+    i18n.set_lang(s.language)
 
     p = planmod.analyze(a.archive, a.target, overwrite=a.overwrite,
                         name_encoding=a.name_encoding, ignore_space=a.ignore_space, settings=s)
@@ -95,24 +96,36 @@ def main(argv=None) -> int:
         if input("YES / JA? ").strip().upper() not in ("YES", "JA"):
             return 1
 
+    is_tty = sys.stdout.isatty()
+
     def progress(pr: engine.Progress):
-        sys.stdout.write("\r" + t("status_running", done=pr.entries_done, ntotal=pr.entries_total,
-                                  bytes=fmt_bytes(pr.bytes_done), btotal=fmt_bytes(pr.bytes_total),
-                                  speed=fmt_bytes(int(pr.speed)), avg=fmt_bytes(int(pr.avg_speed)),
-                                  alloc=fmt_bytes(pr.archive_allocated),
-                                  free=fmt_bytes(pr.free)) + f" · ETA {fmt_duration(pr.eta)}   ")
+        if not is_tty:
+            return
+        line = (t("status_running", done=pr.entries_done, ntotal=pr.entries_total,
+                  bytes=fmt_bytes(pr.bytes_done), btotal=fmt_bytes(pr.bytes_total),
+                  speed=fmt_bytes(int(pr.speed)), avg=fmt_bytes(int(pr.avg_speed)),
+                  alloc=fmt_bytes(pr.archive_allocated),
+                  free=fmt_bytes(pr.free)) + f" · ETA {fmt_duration(pr.eta)}")
+        cols = max(40, shutil.get_terminal_size((120, 20)).columns - 1)
+        if len(line) > cols:
+            line = line[:cols - 1] + "…"
+        sys.stdout.write("\r" + line.ljust(cols))
         sys.stdout.flush()
 
     try:
         r = engine.run(p, progress, durable=True, delete_archive=a.delete_archive,
                        settings=s, _fault=_kill_fault())
     except engine.RunStopped as e:
-        print()
+        if is_tty:
+            print()
         print(msg((e.key, e.params)))
         return 3
-    print()
+    if is_tty:
+        print()
     print(t("done_msg", entries=r.entries, total=r.bytes))
     print(t("done_deleted") if r.archive_deleted else t("done_keep"))
+    if r.damaged_report:
+        print("  ! " + t("done_damaged", count=len(r.damaged) or "?", path=r.damaged_report))
     print(f"{fmt_duration(r.elapsed)} · {fmt_bytes(int(r.written / max(r.elapsed, 1e-6)))}/s · "
           f"avg CPU {r.avg_cpu:.0f} % · peak RAM {fmt_bytes(r.peak_ram)}")
     return 0
@@ -120,6 +133,7 @@ def main(argv=None) -> int:
 
 def status(argv) -> int:
     """Print recovery information of an archive's journal."""
+    i18n.set_lang(st.load().language)
     if not argv:
         print("usage: inplace-unpack status ARCHIVE")
         return 2

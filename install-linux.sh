@@ -25,12 +25,14 @@ cat > "$APPS/inplace-unpack.desktop" <<EOF
 Type=Application
 Name=Inplace-Unpack
 GenericName=ZIP extractor (space-saving)
+GenericName[de]=ZIP-Entpacker (platzsparend)
 Comment=Extract huge ZIPs even without room for the ZIP and its contents
+Comment[de]=Riesige ZIPs entpacken, auch wenn kein Platz für ZIP und Inhalt gleichzeitig ist
 Exec=$BIN/inplace-unpack %f
 Icon=inplace-unpack
 Terminal=false
 Categories=Utility;Archiving;Compression;
-MimeType=application/zip;
+MimeType=application/zip;application/x-zip-compressed;
 StartupWMClass=inplace-unpack
 Keywords=zip;unzip;extract;entpacken;
 EOF

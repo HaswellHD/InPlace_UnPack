@@ -1,17 +1,26 @@
-"""German / English texts. Language follows the Windows UI language."""
+"""German / English texts with Linux-native phrasing when running on Linux."""
 from __future__ import annotations
 
 import os
 
 _SIZE_KEYS = {"need", "free", "missing", "size", "total", "alloc"}
+_IS_LINUX = os.name != "nt"
 
 
-def _detect() -> str:
+def default_lang() -> str:
     env = os.environ.get("INPLACE_UNPACK_LANG")
-    return env if env in ("de", "en") else "en"   # English unless chosen otherwise
+    if env in ("de", "en"):
+        return env
+    if os.environ.get("INPLACE_UNPACK_NO_JOBS") == "1":
+        return "en"
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        val = (os.environ.get(var) or "").lower()
+        if val:
+            return "de" if val.startswith("de") else "en"
+    return "en"
 
 
-LANG = _detect()
+LANG = default_lang()
 
 
 def set_lang(code: str) -> None:
@@ -44,8 +53,12 @@ T = {
     "archive_readonly": ("Die ZIP-Datei ist schreibgeschützt.", "The ZIP file is read-only."),
     "archive_unreadable": ("Die ZIP-Datei kann nicht gelesen werden: {error}",
                            "The ZIP file cannot be read: {error}"),
-    "no_sparse": ("Das Laufwerk der ZIP ({fs}) unterstützt keine Sparse-Dateien. Nötig ist NTFS/ReFS bzw. unter Linux btrfs, ext4 oder xfs.",
-                  "The ZIP's drive ({fs}) does not support sparse files. NTFS/ReFS (Windows) or btrfs/ext4/xfs (Linux) is required."),
+    "no_sparse": ("Das Dateisystem der ZIP ({fs}) unterstützt kein Hole-Punching (Sparse-Dateien). Nötig ist btrfs, ext4, xfs, f2fs, zfs oder NTFS."
+                  if _IS_LINUX else
+                  "Das Laufwerk der ZIP ({fs}) unterstützt keine Sparse-Dateien. Nötig ist NTFS oder ReFS.",
+                  "The ZIP's filesystem ({fs}) does not support hole punching (sparse files). Use btrfs, ext4, xfs, f2fs, zfs or NTFS."
+                  if _IS_LINUX else
+                  "The ZIP's drive ({fs}) does not support sparse files. NTFS or ReFS is required."),
     "target_not_dir": ("Das Ziel ist eine Datei, kein Ordner: {name}",
                        "The target is a file, not a folder: {name}"),
     "journal_corrupt": ("Die Fortschrittsdatei ist beschädigt ({error}): {name}",
@@ -75,31 +88,40 @@ T = {
     "space": ("Zu wenig Speicherplatz: benötigt werden etwa {need}, frei sind {free}. Es fehlen {missing}.",
               "Not enough space: about {need} needed, {free} free. {missing} missing."),
     # ---- warnings ----
-    "archive_compressed": ("Die ZIP ist mit NTFS komprimiert. Es wird weniger Platz frei als ihre Größe.",
+    "archive_compressed": ("Die ZIP ist auf Dateisystemebene komprimiert (z. B. Btrfs zstd) – beim Freigeben wird entsprechend weniger physischer Platz frei."
+                           if _IS_LINUX else
+                           "Die ZIP ist mit NTFS komprimiert. Es wird weniger Platz frei als ihre Größe.",
+                           "The ZIP is filesystem-compressed (e.g. Btrfs zstd); less physical space is freed than its logical size."
+                           if _IS_LINUX else
                            "The ZIP is NTFS-compressed; less space is freed than its size."),
-    "other_volume": ("ZIP und Ziel liegen auf verschiedenen Laufwerken. Dann hilft das Freigeben nicht, das Ziel braucht den vollen Platz.",
-                     "ZIP and target are on different drives, so releasing does not help the target."),
-    "renamed": ("{count} Namen wurden für Windows angepasst (z. B. „{name}“ → „{new}“).",
-                "{count} names were adjusted for Windows (e.g. '{name}' → '{new}')."),
+    "other_volume": ("ZIP und Ziel liegen auf verschiedenen Laufwerken/Pools. Dann hilft das Freigeben nicht, das Ziel braucht den vollen Platz.",
+                     "ZIP and target are on different drives/pools, so releasing does not help the target."),
+    "renamed": ("{count} Dateinamen wurden bereinigt (z. B. „{name}“ → „{new}“).",
+                "{count} file names were sanitized (e.g. '{name}' → '{new}')."),
     "resuming": ("Unterbrochener Vorgang gefunden: {done} von {total} Einträgen sind fertig. Es wird fortgesetzt.",
                  "Interrupted run found: {done} of {total} entries are done. It will resume."),
     "will_overwrite": ("{count} vorhandene Dateien werden überschrieben.",
                        "{count} existing files will be overwritten."),
     # ---- run stopped ----
     "cancelled": ("Angehalten. Sie können jederzeit fortsetzen.", "Paused. You can resume at any time."),
-    "out_of_space": ("Der Speicherplatz reicht nicht für „{name}“ (benötigt {need}, frei {free}). Schaffen Sie Platz und setzen Sie dann fort. Bleibt der freie Platz trotz Freigabe gleich, belegen wahrscheinlich Wiederherstellungspunkte (Schattenkopien) den Platz.",
+    "out_of_space": ("Der Speicherplatz reicht nicht für „{name}“ (benötigt {need}, frei {free}). Schaffen Sie Platz und setzen Sie dann fort. Bleibt der freie Platz trotz Freigabe gleich, halten Btrfs/ZFS-Snapshots oder Reflinks die Daten noch fest."
+                     if _IS_LINUX else
+                     "Der Speicherplatz reicht nicht für „{name}“ (benötigt {need}, frei {free}). Schaffen Sie Platz und setzen Sie dann fort. Bleibt der freie Platz trotz Freigabe gleich, belegen wahrscheinlich Wiederherstellungspunkte (Schattenkopien) den Platz.",
+                     "Not enough space for '{name}' (needs {need}, {free} free). Free some space, then resume. If free space does not grow, Btrfs/ZFS snapshots or reflinks are probably holding the blocks."
+                     if _IS_LINUX else
                      "Not enough space for '{name}' (needs {need}, {free} free). Free some space, then resume. If free space does not grow, restore points (shadow copies) are probably holding it."),
     "crc": ("Der Eintrag „{name}“ ist in der ZIP beschädigt ({error}). Alles davor ist entpackt, alles danach ist noch in der ZIP.",
             "Entry '{name}' is damaged in the ZIP ({error}). Everything before it is extracted, everything after is still in the ZIP."),
     "io_error": ("Fehler bei „{name}“: {error}. Sie können fortsetzen, sobald die Ursache behoben ist.",
                  "Error at '{name}': {error}. You can resume once the cause is fixed."),
-    "link_in_target": ("Im Zielordner liegt eine Verknüpfung (Junction/Symlink): {path}. Aus Sicherheitsgründen gestoppt.",
-                       "There is a link (junction/symlink) in the target: {path}. Stopped for safety."),
+    "link_in_target": ("Im Zielordner liegt eine Verknüpfung (Symlink): {path}. Aus Sicherheitsgründen gestoppt.",
+                       "There is a link (symlink/junction) in the target: {path}. Stopped for safety."),
     # ---- UI ----
     "app_title": ("Inplace-Unpack", "Inplace-Unpack"),
     "zip_file": ("ZIP-Datei:", "ZIP file:"),
     "target": ("Zielordner:", "Target folder:"),
     "browse": ("Durchsuchen …", "Browse …"),
+    "open_folder": ("Ordner öffnen", "Open folder"),
     "check": ("Prüfen", "Check"),
     "start": ("Entpacken starten", "Start extracting"),
     "resume": ("Fortsetzen", "Resume"),
@@ -119,16 +141,25 @@ T = {
                 "Spitzenbedarf: {need} (inkl. Reserve).",
                 "{entries} entries, {total} extracted. ZIP: {size}. Free on target drive: {free}. "
                 "Peak need: {need} (incl. reserve)."),
-    "fits": ("✔ Passt.", "✔ Fits."),
+    "fits": ("✔ Passt – bereit zum Entpacken.", "✔ Fits — ready to extract."),
     "not_ok": ("✖ Kann nicht gestartet werden:", "✖ Cannot start:"),
     "status_running": ("{done}/{ntotal} Einträge · {bytes} von {btotal} · {speed}/s (Ø {avg}/s) · ZIP belegt noch {alloc} · frei {free}",
                        "{done}/{ntotal} entries · {bytes} of {btotal} · {speed}/s (avg {avg}/s) · ZIP still uses {alloc} · {free} free"),
-    "speed_avg":("{speed}/s (Ø {avg}/s)", "{speed}/s (avg {avg}/s)"),
+    "status_done": ("✔ 100 % · {entries} Einträge ({total}) in {elapsed} · Ø {avg}/s",
+                    "✔ 100 % · {entries} entries ({total}) in {elapsed} · avg {avg}/s"),
+    "speed_avg": ("{speed}/s (Ø {avg}/s)", "{speed}/s (avg {avg}/s)"),
     "s_delete_parts": ("Geteilte ZIPs: fertige Teile löschen", "Split ZIPs: delete finished parts"),
     "d_delete_parts": ("Bei „name.zip.001, .002, …“ wird jeder Teil gelöscht, sobald alles darin sicher entpackt ist. Aus: Die Teile bleiben erhalten (dann wird der volle Platz gebraucht).",
                        "For 'name.zip.001, .002, …' each part is deleted as soon as everything in it is safely extracted. Off: parts are kept (the full space is needed then)."),
-    "s_explorer_menu": ("Im Rechtsklick-Menü des Explorers anzeigen", "Show in the Explorer right-click menu"),
-    "d_explorer_menu": ("Fügt „Mit Inplace-Unpack entpacken“ für .zip und .zip.001 hinzu (Windows 11: unter „Weitere Optionen anzeigen“). Nur für Ihr Benutzerkonto, keine Administratorrechte nötig.",
+    "s_explorer_menu": ("Im Rechtsklick-Menü des Dateimanagers anzeigen" if _IS_LINUX else
+                        "Im Rechtsklick-Menü des Explorers anzeigen",
+                        "Show in the file manager right-click menu" if _IS_LINUX else
+                        "Show in the Explorer right-click menu"),
+    "d_explorer_menu": ("Fügt „Mit Inplace-Unpack entpacken“ in KDE Dolphin (ServiceMenu) bzw. GNOME Files hinzu. Nur für Ihr Benutzerkonto, keine Root-Rechte nötig."
+                        if _IS_LINUX else
+                        "Fügt „Mit Inplace-Unpack entpacken“ für .zip und .zip.001 hinzu (Windows 11: unter „Weitere Optionen anzeigen“). Nur für Ihr Benutzerkonto, keine Administratorrechte nötig.",
+                        "Adds 'Extract with Inplace-Unpack' to KDE Dolphin (ServiceMenu) / GNOME Files. Per-user only, no root privileges needed."
+                        if _IS_LINUX else
                         "Adds 'Extract with Inplace-Unpack' for .zip and .zip.001 (Windows 11: under 'Show more options'). Only for your user account, no administrator rights needed."),
     "menu_label": ("Mit Inplace-Unpack entpacken", "Extract with Inplace-Unpack"),
     "zip_types": ("ZIP-Archive", "ZIP archives"),
@@ -140,42 +171,46 @@ T = {
                      "The ZIP file\n{name}\nwill now be destroyed while extracting. Continue?"),
     "choose_first": ("Bitte ZIP-Datei und Zielordner wählen.", "Please choose a ZIP file and a target folder."),
     "warnings": ("Hinweise:", "Notes:"),
-    "vss_note": ("Hinweis: Gibt es Wiederherstellungspunkte auf dem Laufwerk, wird freigegebener Platz eventuell erst später frei. Das Programm hält dann sauber an.",
+    "vss_note": ("Hinweis: Halten Btrfs/ZFS-Snapshots oder CoW-Reflinks Blöcke der ZIP fest, wird der Platz erst nach Löschen des Snapshots frei. Das Programm hält bei Platzmangel sauber an."
+                 if _IS_LINUX else
+                 "Hinweis: Gibt es Wiederherstellungspunkte auf dem Laufwerk, wird freigegebener Platz eventuell erst später frei. Das Programm hält dann sauber an.",
+                 "Note: if Btrfs/ZFS snapshots or CoW reflinks reference the ZIP, freed blocks stay allocated until the snapshot is removed; the program stops cleanly if space runs low."
+                 if _IS_LINUX else
                  "Note: if the drive has restore points, released space may not become free; the program then stops cleanly."),
     "unexpected": ("Unerwarteter Fehler: {error}", "Unexpected error: {error}"),
     # ---- 0.3: new problems / stops ----
     "temp_missing": ("Der Temp-Ordner existiert nicht: {name}", "The temp folder does not exist: {name}"),
     "temp_space": ("Im Temp-Ordner ist zu wenig Platz (benötigt {need}): {name}",
                    "Not enough space in the temp folder (needs {need}): {name}"),
-    "temp_other_volume": ("Der Temp-Ordner liegt auf einem anderen Laufwerk. Jede Datei muss dann zusätzlich kopiert werden, das ist langsamer.",
-                          "The temp folder is on another drive: every file has to be copied, which is slower."),
+    "temp_other_volume": ("Der Temp-Ordner liegt auf einem anderen Laufwerk/Subvolume. Jede Datei muss dann zusätzlich kopiert werden, das ist langsamer.",
+                          "The temp folder is on another drive/subvolume: every file has to be copied, which is slower."),
     "out_of_memory": ("Zu wenig Arbeitsspeicher bei „{name}“. Bitte „Maximaler RAM“ verringern oder den sicheren Modus wählen, dann fortsetzen.",
                       "Out of memory at '{name}'. Lower 'Maximum RAM' or use Safe mode, then resume."),
-    "permission": ("Keine Berechtigung bei „{name}“ ({error}). Ist die Datei in einem anderen Programm geöffnet? Danach fortsetzen.",
-                   "Permission denied at '{name}' ({error}). Is the file open in another program? Then resume."),
+    "permission": ("Keine Berechtigung bei „{name}“ ({error}). Bitte Zugriffsrechte prüfen und danach fortsetzen.",
+                   "Permission denied at '{name}' ({error}). Check permissions, then resume."),
     # ---- modes ----
     "modes": ("Entpack-Modus", "Extraction mode"),
     "mode_safe": ("Sicher", "Safe"),
     "mode_safe_desc": ("Maximale Zuverlässigkeit. 1 Thread, Journal alle 64 MB, jede Datei wird nach dem Schreiben nachgeprüft.",
                        "Maximum reliability. 1 thread, journal every 64 MB, every file is verified after writing."),
-    "mode_safe_info": ("Tempo: niedrig · RAM: bis 256 MB, kleine Dateien im RAM · Speicher: max. ~64 MB Rückstand · Zuverlässigkeit: höchste",
-                       "Speed: low · RAM: up to 256 MB, small files in RAM · Disk: max. ~64 MB lag · Reliability: highest"),
+    "mode_safe_info": ("Tempo: niedrig · RAM: bis 256 MB · Speicher: max. ~64 MB Rückstand · Zuverlässigkeit: höchste",
+                       "Speed: low · RAM: up to 256 MB · Disk: max. ~64 MB lag · Reliability: highest"),
     "mode_balanced": ("Ausgewogen", "Balanced"),
-    "mode_balanced_desc": ("Gutes Tempo, ohne den PC auszubremsen. Niedrige CPU-Priorität, Daten werden alle 64 MB auf die Platte geschrieben (keine Hänger), Journal alle 1 GB (einstellbar).",
-                           "Good speed without slowing the PC down. Low CPU priority, data is flushed every 64 MB (no hangs), journal every 1 GB (configurable)."),
-    "mode_balanced_info": ("Tempo: hoch · RAM: bis 512 MB, kleine Dateien im RAM · Speicher: max. ~1 GB Rückstand · Zuverlässigkeit: hoch",
-                           "Speed: high · RAM: up to 512 MB, small files in RAM · Disk: max. ~1 GB lag · Reliability: high"),
+    "mode_balanced_desc": ("Gutes Tempo, ohne das System auszubremsen. Niedrige CPU-Priorität, Daten werden alle 64 MB herausgeschrieben, Journal alle 1 GB.",
+                           "Good speed without slowing the system down. Low CPU priority, data is flushed every 64 MB, journal every 1 GB."),
+    "mode_balanced_info": ("Tempo: hoch · RAM: bis 512 MB · Speicher: max. ~1 GB Rückstand · Zuverlässigkeit: hoch",
+                           "Speed: high · RAM: up to 512 MB · Disk: max. ~1 GB lag · Reliability: high"),
     "mode_performance": ("Leistung", "Performance"),
-    "mode_performance_desc": ("Maximales Tempo. 2 Arbeits-Threads, normale Priorität, Journal alle 2 GB. Andere Programme warten öfter auf die Platte.",
-                              "Maximum speed. 2 worker threads, normal priority, journal every 2 GB. Other programs wait for the disk more often."),
-    "mode_performance_info": ("Tempo: am höchsten · RAM: bis 1 GB · Speicher: max. ~2 GB Rückstand · Zuverlässigkeit: hoch (Daten werden nie vor dem Sichern freigegeben)",
-                              "Speed: highest · RAM: up to 1 GB · Disk: max. ~2 GB lag · Reliability: high (data is never released before it is flushed)"),
-    "recommended": ("Empfohlen", "Recommended"),
+    "mode_performance_desc": ("Maximales Tempo. Parallele Arbeits-Threads mit eigenen Lese-Handles, normale Priorität, Journal alle 2 GB.",
+                              "Maximum speed. Parallel worker threads with dedicated read handles, normal priority, journal every 2 GB."),
+    "mode_performance_info": ("Tempo: am höchsten · RAM: bis 1 GB · Speicher: max. ~2 GB Rückstand · Zuverlässigkeit: hoch",
+                              "Speed: highest · RAM: up to 1 GB · Disk: max. ~2 GB lag · Reliability: high"),
+    "recommended": ("★ Empfohlen", "★ Recommended"),
     "modes_header": ("Entpack-Modus: {mode}", "Extraction mode: {mode}"),
     "s_keep_damaged": ("Beschädigte Dateien behalten und weitermachen", "Keep damaged files and continue"),
     "d_keep_damaged": ("Ist eine Datei in der ZIP beschädigt (CRC-Fehler), wird sie unverändert entpackt, in „<zip>.damaged.txt“ vermerkt und es geht automatisch weiter. Aus: Der Vorgang hält an dieser Datei an.",
                        "If a file inside the ZIP is damaged (CRC error) it is extracted unchanged, listed in '<zip>.damaged.txt' and extraction continues automatically. Off: the run stops at that file."),
-    "s_language": ("Sprache (nach Neustart)", "Language (after restart)"),
+    "s_language": ("Sprache", "Language"),
     "d_language": ("en = Englisch, de = Deutsch.", "en = English, de = German."),
     "done_damaged": ("{count} beschädigte Datei(en) wurden unverändert entpackt. Liste: {path}",
                      "{count} damaged file(s) were extracted unchanged. List: {path}"),
@@ -192,20 +227,20 @@ T = {
                 "These values were outside the safe limits and have been adjusted:"),
     "defaults": ("Standard wiederherstellen", "Restore defaults"),
     "s_auto_threads": ("Threads automatisch wählen", "Choose threads automatically"),
-    "d_auto_threads": ("Wählt die Thread-Zahl passend zum Modus (1 bzw. 2). Gemessen: Mehr Threads waren auf einer SATA-SSD nicht schneller, die Platte bremst, nicht die CPU. Auf schnellen NVMe-SSDs kann ein höherer Wert helfen, das lässt sich mit „inplace-unpack bench“ prüfen.",
-                       "Picks the thread count for the mode (1 or 2). Measured: more threads were not faster on a SATA SSD, the disk is the limit, not the CPU. On fast NVMe drives more may help; check with 'inplace-unpack bench'."),
+    "d_auto_threads": ("Wählt die Thread-Zahl passend zum Modus (1 im Modus Sicher/Ausgewogen, bis zu 4 im Modus Leistung auf NVMe/Mehrkern-Systemen).",
+                       "Picks the thread count for the mode (1 in Safe/Balanced, up to 4 in Performance on NVMe/multi-core systems)."),
     "s_max_threads": ("Maximale Threads", "Maximum threads"),
     "d_max_threads": ("Wie viele Einträge gleichzeitig entpackt werden (wenn „automatisch“ aus ist). Höher bedeutet mehr CPU- und Plattenlast.",
                       "How many entries are extracted at the same time (when 'automatic' is off). Higher = more CPU and disk load."),
     "s_max_cpu_percent": ("Maximale CPU-Auslastung (%)", "Maximum CPU usage (%)"),
-    "d_max_cpu_percent": ("Obergrenze für die CPU-Nutzung des Programms, bezogen auf den ganzen PC. Wird überschritten, pausiert das Programm kurz.",
-                          "Upper limit for the program's CPU use, relative to the whole PC. When exceeded the program pauses briefly."),
-    "s_background_mode": ("Hintergrund-Modus (niedrige Platten-Priorität)", "Background mode (low disk priority)"),
-    "d_background_mode": ("Sehr niedrige Platten-Priorität für das Entpacken. Achtung: In Messungen auf einer SATA-SSD wurde das Entpacken dadurch langsamer und andere Programme mussten teils sogar länger warten. Gegen einen „langsamen PC“ hilft eher eine Schreib-Obergrenze.",
-                          "Very low disk priority for extraction. Note: measured on a SATA SSD it made extraction slower and sometimes made other programs wait longer. A write-speed limit is more effective against a 'slow PC'."),
+    "d_max_cpu_percent": ("Obergrenze für die CPU-Nutzung des Programms, bezogen auf alle Kerne. Wird sie überschritten, drosselt das Programm kurz.",
+                          "Upper limit for the program's CPU use across all cores. When exceeded the program pauses briefly."),
+    "s_background_mode": ("Hintergrund-Modus (Idle-I/O-Priorität)", "Background mode (idle I/O priority)"),
+    "d_background_mode": ("Setzt die I/O-Klasse der Arbeits-Threads auf Idle (ioprio). Andere Programme erhalten Vorrang auf dem Laufwerk.",
+                          "Sets worker thread I/O scheduling class to idle so other programs get disk priority."),
     "s_priority": ("Priorität", "Priority"),
-    "d_priority": ("CPU-Priorität der Entpack-Threads (idle = nur wenn der PC sonst nichts tut). Die Oberfläche behält immer die normale Priorität.",
-                   "CPU priority of the extraction threads (idle = only when the PC has nothing else to do). The window always keeps normal priority."),
+    "d_priority": ("CPU-Priorität (nice / SCHED_IDLE) der Entpack-Threads. Die Oberfläche behält immer normale Priorität.",
+                   "CPU priority (nice / SCHED_IDLE) of the extraction threads. The window always keeps normal priority."),
     "s_max_ram_mb": ("Maximaler RAM (MB)", "Maximum RAM (MB)"),
     "d_max_ram_mb": ("Höchstens so viel RAM für Puffer und kleine Dateien. Obergrenze: ¼ des eingebauten RAMs.",
                      "At most this much RAM for buffers and small files. Upper limit: ¼ of installed RAM."),
@@ -213,22 +248,26 @@ T = {
     "d_ram_threshold_percent": ("Ist der Arbeitsspeicher des Systems stärker ausgelastet, schreibt das Programm direkt auf die Platte und arbeitet weniger parallel.",
                                 "If system memory load is above this, the program streams to disk and runs fewer entries in parallel."),
     "s_auto_memory": ("Automatische Speicherverwaltung", "Automatic memory management"),
-    "d_auto_memory": ("Verwendet höchstens ¼ des gerade freien RAMs, auch wenn das Maximum höher ist.",
-                      "Uses at most ¼ of currently free RAM, even if the maximum is higher."),
+    "d_auto_memory": ("Verwendet höchstens ¼ des gerade verfügbaren RAMs, auch wenn das Maximum höher ist.",
+                      "Uses at most ¼ of currently available RAM, even if the maximum is higher."),
     "s_auto_ram_disk": ("RAM oder Platte automatisch wählen", "Choose RAM or disk automatically"),
     "d_auto_ram_disk": ("Kleine Dateien werden im RAM entpackt und in einem Zug geschrieben, große werden gestreamt. Aus = alles streamen.",
                         "Small files are decompressed in RAM and written in one go, large files are streamed. Off = stream everything."),
     "s_temp_dir": ("Temp-Ordner für unfertige Dateien", "Temp folder for unfinished files"),
-    "d_temp_dir": ("Leer = direkt neben der Zieldatei (am schnellsten, empfohlen). Ein Ordner auf einem anderen Laufwerk braucht eine zusätzliche Kopie.",
-                   "Empty = next to the target file (fastest, recommended). A folder on another drive needs an extra copy."),
+    "d_temp_dir": ("Leer = direkt neben der Zieldatei (am schnellsten, empfohlen). Ein Ordner auf einem anderen Laufwerk/Subvolume erfordert eine Kopie.",
+                   "Empty = next to the target file (fastest, recommended). A folder on another drive/subvolume needs an extra copy."),
     "s_max_temp_gb": ("Max. unfertige Daten gleichzeitig (GB)", "Max. unfinished data at once (GB)"),
     "d_max_temp_gb": ("Begrenzt, wie viel gleichzeitig parallel entpackt wird. Höher braucht mehr freien Platz.",
                       "Limits how much is extracted in parallel. Higher needs more free space."),
     "s_max_write_mb_s": ("Max. Schreibgeschwindigkeit (MB/s, 0 = unbegrenzt)", "Max. write speed (MB/s, 0 = unlimited)"),
-    "d_max_write_mb_s": ("Bremst das Schreiben, damit die Platte für andere Programme frei bleibt.",
-                         "Throttles writing so the disk stays usable for other programs."),
+    "d_max_write_mb_s": ("Bremst das Schreiben, damit das Laufwerk für andere Programme reaktionsschnell bleibt.",
+                         "Throttles writing so the drive stays responsive for other programs."),
     "s_flush_interval_mb": ("Zwischenspeichern alle (MB, 0 = nur am Dateiende)", "Flush every (MB, 0 = end of file only)"),
-    "d_flush_interval_mb": ("Große Dateien werden regelmäßig auf die Platte geschrieben statt am Ende auf einmal. Das verhindert lange „Hänger“ und hält den Windows-Cache klein.",
+    "d_flush_interval_mb": ("Große Dateien werden regelmäßig per fdatasync auf das Laufwerk geschrieben statt am Ende auf einmal. Verhindert Hänger und hält den Page-Cache schlank."
+                            if _IS_LINUX else
+                            "Große Dateien werden regelmäßig auf die Platte geschrieben statt am Ende auf einmal. Das verhindert lange „Hänger“ und hält den Windows-Cache klein.",
+                            "Large files are synced regularly via fdatasync instead of all at once at the end. Prevents stalls and keeps the page cache small."
+                            if _IS_LINUX else
                             "Large files are flushed to disk regularly instead of all at once at the end. Prevents long 'hangs' and keeps the Windows cache small."),
     "s_low_space_warn_gb": ("Warnen unter (GB frei)", "Warn below (GB free)"),
     "d_low_space_warn_gb": ("Zeigt eine Warnung, wenn der freie Platz unter diesen Wert fällt.",
@@ -242,14 +281,21 @@ T = {
     "s_auto_resume": ("Automatisch fortsetzen", "Resume automatically"),
     "d_auto_resume": ("Beim Programmstart werden unterbrochene Vorgänge sofort fortgesetzt. Nach „Platz voll“ oder einem vorübergehenden Fehler wird automatisch erneut versucht.",
                       "On program start interrupted jobs resume immediately. After 'disk full' or a temporary error it retries automatically."),
-    "s_resume_after_reboot": ("Nach Neustart von Windows fortsetzen", "Resume after Windows restarts"),
-    "d_resume_after_reboot": ("Legt nur während eines laufenden Vorgangs einen Autostart-Eintrag für Ihren Benutzer an. Er wird danach wieder entfernt.",
+    "s_resume_after_reboot": ("Nach Systemneustart fortsetzen" if _IS_LINUX else
+                              "Nach Neustart von Windows fortsetzen",
+                              "Resume after system reboot" if _IS_LINUX else
+                              "Resume after Windows restarts"),
+    "d_resume_after_reboot": ("Legt nur während eines laufenden Vorgangs einen XDG-Autostart-Eintrag (~/.config/autostart) an und entfernt ihn danach wieder."
+                              if _IS_LINUX else
+                              "Legt nur während eines laufenden Vorgangs einen Autostart-Eintrag für Ihren Benutzer an. Er wird danach wieder entfernt.",
+                              "Adds a per-user XDG autostart entry (~/.config/autostart) only while a job is unfinished; removed afterwards."
+                              if _IS_LINUX else
                               "Adds a per-user autostart entry only while a job is unfinished; it is removed afterwards."),
     "s_auto_optimize": ("Automatische Ressourcen-Optimierung", "Automatic resource optimization"),
     "d_auto_optimize": ("Startet weniger parallele Einträge, wenn RAM oder freier Platz knapp werden.",
                         "Starts fewer parallel entries when RAM or free space gets tight."),
     "s_show_monitor": ("Detaillierte Hardware-Anzeige", "Detailed hardware monitor"),
-    "d_show_monitor": ("Zeigt CPU, RAM und Platte in Echtzeit an.", "Shows CPU, RAM and disk in real time."),
+    "d_show_monitor": ("Zeigt CPU, RAM und Laufwerks-I/O in Echtzeit an.", "Shows CPU, RAM and disk I/O in real time."),
     "recovery_info": ("Wiederherstellungs-Info …", "Recovery info …"),
     "no_journal": ("Für diese ZIP gibt es keinen unterbrochenen Vorgang.", "There is no interrupted job for this ZIP."),
     "journal_invalid": ("Die Fortschrittsdatei ist beschädigt: {error}", "The progress file is damaged: {error}"),
@@ -261,7 +307,7 @@ T = {
     "m_elapsed": ("Verstrichen", "Elapsed"), "m_eta": ("Restzeit", "Remaining"),
     "m_cpu": ("CPU (Programm / System)", "CPU (program / system)"),
     "m_ram": ("RAM (Programm / System)", "RAM (program / system)"),
-    "m_disk": ("Platte (lesen / schreiben)", "Disk (read / write)"),
+    "m_disk": ("Laufwerk (lesen / schreiben)", "Disk (read / write)"),
     "m_threads": ("Threads (aktiv / max.)", "Threads (active / max.)"),
     "m_free": ("Frei auf Ziel-Laufwerk", "Free on target drive"),
     "low_space_warn": ("⚠ Wenig freier Speicherplatz!", "⚠ Low free disk space!"),
@@ -270,6 +316,7 @@ T = {
     "auto_resume_cancel": ("Nicht fortsetzen", "Don't resume"),
     "auto_retry_wait": ("Automatischer neuer Versuch in {sec} s …", "Retrying automatically in {sec} s …"),
     "resume_found": ("Es gibt einen unterbrochenen Vorgang:\n{name}\nJetzt fortsetzen?", "There is an interrupted job:\n{name}\nResume now?"),
+    "theme_toggle": ("Design wechseln (Hell/Dunkel)", "Toggle theme (Light/Dark)"),
 }
 
 

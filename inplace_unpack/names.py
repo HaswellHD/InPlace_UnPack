@@ -1,4 +1,4 @@
-"""Turning archive member names into safe, unique Windows paths.
+"""Turning archive member names into safe, unique cross-platform paths.
 
 Rules (all applied before anything is written):
 * "/" and "\\" are both separators; empty, "." and ".." parts are dropped,
@@ -6,10 +6,12 @@ Rules (all applied before anything is written):
 * characters Windows forbids (<>:"|?* and control characters) become "_",
   trailing dots and spaces are stripped.
 * reserved device names (CON, NUL, COM1, ...) get a "_" prefix.
-* overlong names are shortened with a hash so they stay unique.
-* names that clash on Windows (case-insensitive, or a file where a folder
-  must go) get " (2)", " (3)", ... appended. The result is deterministic, so
-  a resumed run computes exactly the same names.
+* overlong names (> 200 UTF-16 chars on NTFS or > 210 UTF-8 bytes on Linux
+  btrfs/ext4/xfs NAME_MAX=255) are shortened with a hash so they stay unique
+  and still leave room for " (n)" and ".~iuN.part".
+* names that clash (case-insensitive, or a file where a folder must go) get
+  " (2)", " (3)", ... appended. The result is deterministic, so a resumed run
+  computes exactly the same names.
 """
 from __future__ import annotations
 
@@ -21,6 +23,18 @@ _ILLEGAL = re.compile(r'[<>:"|?*\x00-\x1f]')
 _RESERVED = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
 _RESERVED |= {f"{p}{n}" for p in ("COM", "LPT") for n in list("123456789") + ["¹", "²", "³"]}
 MAX_COMPONENT = 200  # NTFS allows 255 UTF-16 units; keep room for " (n)" and ".part"
+MAX_UTF8_BYTES = 210  # Linux NAME_MAX is 255 UTF-8 bytes; leave 45 B for " (n)" and ".~iuN.part"
+
+
+def _utf8_len(s: str) -> int:
+    return len(s.encode("utf-8", "surrogatepass"))
+
+
+def _trim_to_limits(s: str, max_chars: int, max_bytes: int) -> str:
+    s = s[:max_chars]
+    while s and _utf8_len(s) > max_bytes:
+        s = s[:-1]
+    return s
 
 
 def sanitize_component(part: str) -> str | None:
@@ -30,11 +44,13 @@ def sanitize_component(part: str) -> str | None:
     stem = c.split(".", 1)[0].rstrip(" ").upper()
     if stem in _RESERVED:
         c = "_" + c
-    if len(c) > MAX_COMPONENT:
+    if len(c) > MAX_COMPONENT or _utf8_len(c) > MAX_UTF8_BYTES:
         digest = hashlib.sha1(part.encode("utf-8", "surrogatepass")).hexdigest()[:10]
         base, dot, ext = c.rpartition(".")
-        ext = (dot + ext) if dot and len(ext) <= 20 else ""
-        c = c[:MAX_COMPONENT - len(ext) - 11] + "~" + digest + ext
+        ext = (dot + ext) if dot and len(ext) <= 20 and _utf8_len(dot + ext) <= 30 else ""
+        suffix = "~" + digest + ext
+        head = _trim_to_limits(c, MAX_COMPONENT - len(suffix), MAX_UTF8_BYTES - _utf8_len(suffix))
+        c = head + suffix
     return c
 
 

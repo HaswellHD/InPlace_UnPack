@@ -1,9 +1,8 @@
-"""Explorer right-click entry ("Extract with Inplace-Unpack") for .zip and .zip.001.
+"""File-manager right-click entry ("Extract with Inplace-Unpack") for .zip and .zip.001.
 
-Written to HKEY_CURRENT_USER\\Software\\Classes\\SystemFileAssociations\\<ext>\\shell,
-so it needs no administrator rights, does not change the default program for ZIP
-files, and only affects the current user. On Windows 11 the entry appears under
-"Show more options" (the classic menu).
+Windows: HKCU\\Software\\Classes\\SystemFileAssociations\\<ext>\\shell (no admin rights).
+Linux:   KDE Dolphin ServiceMenu (~/.local/share/kio/servicemenus) and, when GNOME
+         Files (Nautilus) is present, ~/.local/share/nautilus/scripts.
 """
 from __future__ import annotations
 
@@ -27,22 +26,52 @@ def icon_path() -> str:
     return sys.executable if getattr(sys, "frozen", False) else ""
 
 
+def _data_home() -> str:
+    return os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+
+
 def _kde_menu_file() -> str:
-    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-    return os.path.join(base, "kio", "servicemenus", "inplace-unpack.desktop")
+    return os.path.join(_data_home(), "kio", "servicemenus", "inplace-unpack.desktop")
+
+
+def _nautilus_script_dir() -> str:
+    return os.path.join(_data_home(), "nautilus", "scripts")
+
+
+def _linux_exec_prefix() -> str:
+    launcher = os.path.expanduser("~/.local/bin/inplace-unpack")
+    if os.path.isfile(launcher) and os.access(launcher, os.X_OK):
+        return f'"{launcher}"'
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    app_gui = os.path.join(root, "app_gui.py")
+    if os.path.exists(app_gui):
+        return f'"{sys.executable}" "{app_gui}"'
+    return f'"{sys.executable}" -m inplace_unpack.gui'
 
 
 def _linux_install(label: str) -> None:
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cmd = _linux_exec_prefix()
     f = _kde_menu_file()
     os.makedirs(os.path.dirname(f), exist_ok=True)
+    # Note: split ZIP first parts (.zip.001) begin with PK\x03\x04, which shared-mime-info
+    # already classifies as application/zip (no application/octet-stream pollution!).
     with open(f, "w", encoding="utf-8") as fh:
         fh.write("[Desktop Entry]\nType=Service\n"
-                 "MimeType=application/zip;application/x-zip-compressed;application/octet-stream;\n"
-                 "Actions=inplaceUnpack;\nX-KDE-Priority=TopLevel\n\n"
+                 "MimeType=application/zip;application/x-zip-compressed;\n"
+                 "Actions=inplaceUnpack;\nX-KDE-Priority=TopLevel\n"
+                 "X-KDE-RequiredNumberOfUrls=1\n\n"
                  f"[Desktop Action inplaceUnpack]\nName={label}\nIcon=inplace-unpack\n"
-                 f'Exec="{sys.executable}" "{os.path.join(root, "app_gui.py")}" %f\n')
+                 f"Exec={cmd} %f\n")
     os.chmod(f, 0o755)
+    naut_parent = os.path.join(_data_home(), "nautilus")
+    if os.path.isdir(naut_parent):
+        sdir = _nautilus_script_dir()
+        os.makedirs(sdir, exist_ok=True)
+        sf = os.path.join(sdir, "Inplace-Unpack")
+        with open(sf, "w", encoding="utf-8") as fh:
+            fh.write('#!/bin/sh\nfirst=$(printf "%s" "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS" | head -n 1)\n'
+                     f'[ -n "$first" ] && exec {cmd} "$first"\n')
+        os.chmod(sf, 0o755)
 
 
 def install(label: str) -> None:
@@ -62,8 +91,11 @@ def install(label: str) -> None:
 
 def uninstall() -> None:
     if os.name != "nt":
-        if os.path.exists(_kde_menu_file()):
-            os.remove(_kde_menu_file())
+        for p in (_kde_menu_file(), os.path.join(_nautilus_script_dir(), "Inplace-Unpack")):
+            try:
+                os.remove(p)
+            except FileNotFoundError:
+                pass
         return
     import winreg
     for ext in EXTENSIONS:

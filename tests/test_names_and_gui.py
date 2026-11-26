@@ -120,10 +120,21 @@ def test_auto_resume_starts_immediately(tmp_path, monkeypatch):
     root.destroy()
 
 
-def test_shell_menu_registry(monkeypatch):
-    """Right-click entry: written to HKCU under a test key, then removed again."""
-    import winreg
+def test_shell_menu_registry(tmp_path, monkeypatch):
+    """Right-click entry: written under a test key/folder, then removed again."""
     from inplace_unpack import shellmenu
+    if os.name != "nt":
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+        (tmp_path / "xdg" / "nautilus").mkdir(parents=True)
+        shellmenu.install("Extract with Inplace-Unpack")
+        assert shellmenu.installed()
+        kde_file = (tmp_path / "xdg" / "kio" / "servicemenus" / "inplace-unpack.desktop").read_text()
+        assert "application/zip" in kde_file and "application/octet-stream" not in kde_file
+        assert (tmp_path / "xdg" / "nautilus" / "scripts" / "Inplace-Unpack").exists()
+        shellmenu.uninstall()
+        assert not shellmenu.installed()
+        return
+    import winreg
     monkeypatch.setattr(shellmenu, "_BASE",
                         "Software\\Inplace-Unpack-Test\\{ext}\\shell\\" + shellmenu.KEY_NAME)
     try:
@@ -146,6 +157,47 @@ def test_shell_menu_registry(monkeypatch):
             winreg.DeleteKey(winreg.HKEY_CURRENT_USER, "Software\\Inplace-Unpack-Test")
         except OSError:
             pass
+
+
+def test_utf8_multibyte_long_component_fits_linux_name_max(tmp_path):
+    """95 Japanese/Cyrillic chars = 285 UTF-8 bytes (> Linux NAME_MAX 255) must be shortened."""
+    from conftest import all_files, extract, sha
+    long_jp = "日本語テストファイル名_" + "あ" * 95 + "1.txt"
+    long_jp2 = "日本語テストファイル名_" + "あ" * 95 + "2.txt"
+    a = names.split_safe(long_jp)[0]
+    b = names.split_safe(long_jp2)[0]
+    assert len(a.encode("utf-8")) <= names.MAX_UTF8_BYTES and a != b and a.endswith(".txt")
+    z = make_zip(tmp_path / "jp.zip", [(long_jp, b"one"), (long_jp2, b"two")])
+    extract(z, tmp_path / "out")
+    assert sorted(all_files(tmp_path / "out").values()) == sorted([sha(b"one"), sha(b"two")])
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinks and permissions")
+def test_linux_overwrite_symlink_does_not_chmod_target_and_preserves_exec(tmp_path):
+    """Overwriting a symlink in target must never chmod the symlink's target file;
+    Unix executable entries (+x) preserve their executable bit."""
+    import zipfile
+    from conftest import extract
+    secret = tmp_path / "outside_secret.txt"
+    secret.write_bytes(b"keep-readable")
+    secret.chmod(0o644)
+    out = tmp_path / "out"
+    out.mkdir()
+    os.symlink(str(secret), str(out / "run.sh"))
+
+    zpath = str(tmp_path / "exec.zip")
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zi = zipfile.ZipInfo("run.sh", date_time=(2024, 1, 1, 0, 0, 0))
+        zi.create_system = 3
+        zi.external_attr = (0o100755 << 16)
+        zf.writestr(zi, b"#!/bin/sh\necho ok\n")
+
+    extract(zpath, out, overwrite=True)
+    # outside_secret.txt must still be 0o644 (not clobbered to 0o200 by symlink chmod!)
+    assert (secret.stat().st_mode & 0o777) == 0o644
+    assert secret.read_bytes() == b"keep-readable"
+    assert not (out / "run.sh").is_symlink()
+    assert os.access(out / "run.sh", os.X_OK)
 
 
 def test_bench_runs(tmp_path, capsys):

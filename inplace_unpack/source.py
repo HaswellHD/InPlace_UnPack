@@ -4,7 +4,7 @@ Split archives (`name.zip.001`, `name.zip.002`, ...) are plain byte-level splits
 (7-Zip "split to volumes", HJSplit, `split`): joined together they are an ordinary
 ZIP. They are read through a virtual file, and "releasing" the extracted front of
 the archive means deleting every part that lies completely before the release point
-(and, on NTFS/ReFS, punching a hole into the part that contains it).
+(and, on sparse-capable filesystems, punching a hole into the part that contains it).
 
 The same crash-safety rule applies as for a single file: a part is only deleted
 after the entries it contains are on disk and recorded in the journal.
@@ -19,6 +19,7 @@ import threading
 from . import winfs
 
 _PART_RE = re.compile(r"^(?P<base>.+\.zip)\.(?P<num>\d{3,})$", re.IGNORECASE)
+_READ_BUF = 256 * 1024
 
 
 def split_base(path: str) -> tuple[str, int] | None:
@@ -111,8 +112,10 @@ class _PartsReader(io.RawIOBase):
             if i != self.cur:
                 self._close_fh()
                 fd = os.open(winfs.long_path(self.paths[i]),
-                             os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_SEQUENTIAL", 0))
-                self.fh, self.cur = os.fdopen(fd, "rb"), i
+                             os.O_RDONLY | getattr(os, "O_BINARY", 0)
+                             | getattr(os, "O_SEQUENTIAL", 0) | getattr(os, "O_CLOEXEC", 0))
+                winfs.advise_sequential(fd)
+                self.fh, self.cur = os.fdopen(fd, "rb", buffering=0), i
             off = self.pos - self.starts[i]
             self.fh.seek(off)
             want = min(n, self.sizes[i] - off)
@@ -144,6 +147,8 @@ class ArchiveSource:
     def __init__(self, archive: str, journal: dict | None = None):
         self.archive = archive
         self.split = is_split(archive)
+        self._readers: list[_PartsReader] = []
+        self._readers_lock = threading.Lock()
         if not self.split:
             self.paths = [archive]
             self.sizes = [os.path.getsize(archive)] if os.path.exists(archive) else [0]
@@ -158,7 +163,6 @@ class ArchiveSource:
                 self.sizes.append(int(known[i]))
             else:
                 raise FileNotFoundError(p)
-        self._reader: _PartsReader | None = None
 
     # ------------------------------------------------------------------ info
     @property
@@ -176,27 +180,46 @@ class ArchiveSource:
         return ex[-1] if ex else self.archive
 
     def allocated(self) -> int:
-        return sum(winfs.allocated_size(p) for p in self.existing)
+        total = 0
+        for p in self.paths:
+            try:
+                total += winfs.allocated_size(p)
+            except FileNotFoundError:
+                pass
+        return total
 
     def part_start(self, i: int) -> int:
         return sum(self.sizes[:i])
 
     # ------------------------------------------------------------------ io
     def open(self):
-        """Binary, seekable file object for zipfile."""
+        """Binary, seekable file object for zipfile (with 256 KiB read buffering)."""
         if not self.split:
             fd = os.open(winfs.long_path(self.archive),
-                         os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_SEQUENTIAL", 0))
-            return os.fdopen(fd, "rb")
-        self._reader = _PartsReader(self.paths, self.sizes)
-        return io.BufferedReader(self._reader, buffer_size=256 * 1024)
+                         os.O_RDONLY | getattr(os, "O_BINARY", 0)
+                         | getattr(os, "O_SEQUENTIAL", 0) | getattr(os, "O_CLOEXEC", 0))
+            winfs.advise_sequential(fd)
+            return os.fdopen(fd, "rb", buffering=_READ_BUF)
+        r = _PartsReader(self.paths, self.sizes)
+        with self._readers_lock:
+            self._readers.append(r)
+        return io.BufferedReader(r, buffer_size=_READ_BUF)
+
+    def drop_part(self, i: int) -> None:
+        with self._readers_lock:
+            readers = list(self._readers)
+        for r in readers:
+            r.drop(i)
 
     def releaser(self, punch: bool):
         return _SingleReleaser(self.archive) if not self.split else _PartsReleaser(self, punch)
 
     def remove_all(self) -> None:
-        for p in self.existing:
-            os.remove(p)
+        for p in self.paths:
+            try:
+                os.remove(p)
+            except FileNotFoundError:
+                pass
 
 
 class _SingleReleaser:
@@ -227,9 +250,11 @@ class _PartsReleaser:
                     sp = self.sparse.pop(i, None)
                     if sp:
                         sp.close()
-                    if src._reader is not None:
-                        src._reader.drop(i)
-                    os.remove(winfs.long_path(p))
+                    src.drop_part(i)
+                    try:
+                        os.remove(winfs.long_path(p))
+                    except FileNotFoundError:
+                        pass
             elif ps < end and self.punch and os.path.exists(p):
                 if i not in self.sparse:
                     self.sparse[i] = winfs.SparseFile(p)

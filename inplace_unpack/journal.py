@@ -2,8 +2,9 @@
 
 The journal records *how many* entries (in file-offset order) are finished,
 plus information for inspection (bytes done, last entry, mode, time).
-It is always replaced atomically: write temp file -> fsync -> os.replace,
-so after a crash it holds either the old or the new state.
+It is always replaced atomically: write temp file -> fsync -> os.replace
+(-> directory fsync on Linux), so after a crash it holds either the old or
+the new state.
 
 Format 2 adds a SHA-256 checksum over its own content (integrity check).
 Format 1 journals (written by version 0.2.x) are still accepted, so a run
@@ -15,6 +16,8 @@ import datetime as _dt
 import hashlib
 import json
 import os
+
+from . import winfs
 
 FORMAT = "inplace-unzip/2"
 ACCEPTED = ("inplace-unzip/1", "inplace-unzip/2")
@@ -66,6 +69,8 @@ def save(archive: str, data: dict, durable: bool = True) -> None:
         if durable:
             os.fsync(f.fileno())
     os.replace(tmp, p)
+    if durable:
+        winfs.fsync_dir(os.path.dirname(p))
 
 
 def remove(archive: str) -> None:

@@ -87,11 +87,10 @@ cd InPlace_UnPack-forlinux
 
 What is different on Linux:
 
-- File-system calls: `inplace_unpack/_winfs_posix.py`; resource monitor via `/proc`: `_sysinfo_posix.py`.
-- The "right-click entry" option creates a KDE Dolphin service menu (`~/.local/share/kio/servicemenus`).
-- "Resume after reboot" uses `~/.config/autostart`; settings live in `~/.config/Inplace-Unpack`.
-- Tested on Fedora 45 (KDE, btrfs, Python 3.15). The Windows-only tests (registry, `mklink /J`,
-  case-insensitive names) fail on Linux by design.
+- **Hole punching & page-cache control** (`inplace_unpack/_winfs_posix.py`): kernel-probed `fallocate64(FALLOC_FL_PUNCH_HOLE)` via `O_TMPFILE` (supports btrfs, ext4, xfs, f2fs, zfs, bcachefs, ntfs3, tmpfs), Btrfs subvolume pool detection, `POSIX_FADV_SEQUENTIAL` read-ahead, `POSIX_FADV_DONTNEED` cache eviction on large files, `fdatasync` streaming flushes, and directory `fsync` on journal commits.
+- **Parallel I/O & priority** (`engine.py`, `_sysinfo_posix.py`): dedicated per-worker archive handles (no shared `ZipFile` lock/seek thrashing), `/proc` resource monitor, per-worker `nice` / `SCHED_IDLE` / `ioprio`, and preservation of Unix `+x` permissions.
+- **Native desktop UI** (`gui.py`, `shellmenu.py`, `jobs.py`): automatic Dark/Light theme (KDE `kdeglobals` / GNOME `gsettings`) with live `☾/☀` and `DE/EN` toggles, native `kdialog` / `zenity` file pickers, KDE Dolphin ServiceMenu + GNOME Nautilus script, and XDG autostart (`~/.config/autostart`).
+- **Full test suite**: all tests pass on Linux (`pytest tests -q`, Fedora 45, KDE, btrfs, Python 3.15).
 
 ## How to use it
 

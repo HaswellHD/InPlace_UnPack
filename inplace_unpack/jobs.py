@@ -1,8 +1,9 @@
 """List of unfinished jobs (for automatic resume) and the optional
 per-user autostart entry that resumes them after a reboot.
 
-The autostart entry (HKCU\\...\\Run, no admin rights) only exists while a job
-is unfinished and only if the user enabled "resume after reboot".
+The autostart entry (HKCU\\...\\Run on Windows, ~/.config/autostart on Linux;
+no admin rights) only exists while a job is unfinished and only if the user
+enabled "resume after reboot".
 """
 from __future__ import annotations
 
@@ -82,8 +83,14 @@ def _linux_autostart_file() -> str:
 
 def _launch_command() -> str:
     if os.name != "nt":
+        launcher = os.path.expanduser("~/.local/bin/inplace-unpack")
+        if os.path.isfile(launcher) and os.access(launcher, os.X_OK):
+            return f'"{launcher}" --resume-pending'
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return f'"{sys.executable}" "{os.path.join(root, "app_gui.py")}" --resume-pending'
+        app_gui = os.path.join(root, "app_gui.py")
+        if os.path.exists(app_gui):
+            return f'"{sys.executable}" "{app_gui}" --resume-pending'
+        return f'"{sys.executable}" -m inplace_unpack.gui --resume-pending'
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}" --resume-pending'
     pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")

@@ -127,8 +127,11 @@ def test_junction_inside_target_is_not_followed(tmp_path):
     elsewhere.mkdir()
     out = tmp_path / "out"
     out.mkdir()
-    subprocess.run(["cmd", "/c", "mklink", "/J", str(out / "sub"), str(elsewhere)],
-                   check=True, capture_output=True)
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(out / "sub"), str(elsewhere)],
+                       check=True, capture_output=True)
+    else:
+        os.symlink(str(elsewhere), str(out / "sub"), target_is_directory=True)
     z = make_zip(tmp_path / "j.zip", [("first.txt", rand_bytes(200_000, 1)),
                                        ("sub/x.txt", b"pwned")])
     p = planmod.analyze(z, out, overwrite=True)
