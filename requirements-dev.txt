@@ -1,0 +1,5 @@
+# Runtime: no third-party dependencies (Python standard library only).
+# Development / build only:
+pytest>=8          # MIT
+pyinstaller>=6     # GPL-2.0 with bootloader exception: built executables may use any license
+pillow>=10         # MIT-CMU; only for tools/make_icon.py

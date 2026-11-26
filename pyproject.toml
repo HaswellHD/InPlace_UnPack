@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inplace-unpack"
+dynamic = ["version"]
+description = "Extract huge ZIP archives on a nearly full disk by releasing space while extracting (Windows, NTFS/ReFS)."
+readme = "Readme.md"
+license = "MIT"
+authors = [{ name = "EZG_Haswell" }]
+requires-python = ">=3.11"
+dependencies = []
+classifiers = [
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Archiving :: Compression",
+    "Environment :: Win32 (MS Windows)",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pyinstaller>=6", "pillow>=10"]
+
+[project.scripts]
+inplace-unpack-cli = "inplace_unpack.cli:main"
+
+[project.gui-scripts]
+inplace-unpack = "inplace_unpack.gui:main"
+
+[tool.setuptools]
+packages = ["inplace_unpack"]
+
+[tool.setuptools.dynamic]
+version = { attr = "inplace_unpack.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Build output
+build/
+dist/
+*.spec
+# ready-built .exe files go into GitHub Releases, not into the repo
+*.exe
+
+# Local data that must never be committed
+*.pfx
+*.p12
+*.damaged.txt
+*.unzip-progress
+*.unzip-progress.tmp
+*.part
+settings.json
+!examples/*.json
+benchmark-results*.json
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

@@ -1,0 +1,23 @@
+{
+  "mode": "balanced",
+  "auto_threads": true,
+  "max_threads": 1,
+  "max_cpu_percent": 75,
+  "background_mode": false,
+  "priority": "below_normal",
+  "max_ram_mb": 512,
+  "ram_threshold_percent": 85,
+  "auto_memory": true,
+  "auto_ram_disk": true,
+  "temp_dir": "",
+  "max_temp_gb": 8.0,
+  "max_write_mb_s": 0,
+  "flush_interval_mb": 64,
+  "low_space_warn_gb": 2.0,
+  "sync_interval_mb": 1024,
+  "verify_written": false,
+  "auto_resume": true,
+  "resume_after_reboot": false,
+  "auto_optimize": true,
+  "show_monitor": true
+}
