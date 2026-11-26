@@ -10,6 +10,7 @@ venv/
 build/
 dist/
 *.spec
+!packaging/inplace-unpack.spec
 # ready-built .exe files go into GitHub Releases, not into the repo
 *.exe
 

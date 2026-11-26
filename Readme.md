@@ -77,25 +77,50 @@ safety reserve.
 
 ## Install (Linux)
 
-### 1. Install Python 3.11+ and Tkinter
+### Packages (RPM, DEB, NixOS)
+
+#### Fedora / RHEL / openSUSE (`.rpm`)
+
+Download the `.rpm` from [Releases](https://github.com/ezgerazer/InPlace_UnPack-forlinux/releases) and install it:
 
 ```sh
 # Fedora / RHEL
-sudo dnf install python3 python3-tkinter git
-
-# Debian / Ubuntu / Linux Mint
-sudo apt install python3 python3-tk git
-
-# Arch Linux / CachyOS / EndeavourOS
-sudo pacman -S python tk git
+sudo dnf install ./inplace-unpack-*.noarch.rpm
 
 # openSUSE
-sudo zypper install python3 python3-tk git
+sudo zypper install ./inplace-unpack-*.noarch.rpm
 ```
 
-*(Optional: `kdialog` on KDE or `zenity` on GNOME/GTK is used automatically for native file dialogs — usually pre-installed.)*
+#### Debian / Ubuntu / Linux Mint (`.deb`)
 
-### 2. Clone & add to your application launcher
+Download the `.deb` from [Releases](https://github.com/ezgerazer/InPlace_UnPack-forlinux/releases) and install it:
+
+```sh
+sudo apt install ./inplace-unpack_*_all.deb
+```
+
+#### NixOS / Nix Flakes
+
+Run directly without installing:
+
+```sh
+nix run github:ezgerazer/InPlace_UnPack-forlinux
+# or CLI:
+nix run github:ezgerazer/InPlace_UnPack-forlinux#cli -- ARCHIVE.zip TARGET_FOLDER
+```
+
+Or add to your NixOS `flake.nix`:
+
+```nix
+inputs.inplace-unpack.url = "github:ezgerazer/InPlace_UnPack-forlinux";
+# then in environment.systemPackages:
+#   inputs.inplace-unpack.packages.${pkgs.system}.default
+```
+
+### From source (any distro)
+
+1. Install Python 3.11+ and Tkinter (`python3-tkinter` on Fedora, `python3-tk` on Debian/Ubuntu, `tk` on Arch).
+2. Clone and run `./install-linux.sh`:
 
 ```sh
 git clone https://github.com/ezgerazer/InPlace_UnPack-forlinux.git
@@ -103,23 +128,14 @@ cd InPlace_UnPack-forlinux
 ./install-linux.sh
 ```
 
-This installs (per-user, no `sudo`):
-- App menu launcher: `~/.local/share/applications/inplace-unpack.desktop` + icon
-- GUI command: `~/.local/bin/inplace-unpack`
-- CLI command: `~/.local/bin/inplace-unpack-cli`
+This installs per-user (no `sudo`) into `~/.local/bin` and `~/.local/share/applications`.
+To remove: `./install-linux.sh --uninstall`.
 
-*(Make sure `~/.local/bin` is in your `PATH`, or start **Inplace-Unpack** directly from your desktop app launcher.)*
-
-To remove the launcher entries again:
+### Building `.deb` / `.rpm` locally
 
 ```sh
-./install-linux.sh --uninstall
-```
-
-Or run directly without installing:
-
-```sh
-python3 app_gui.py
+./packaging/build-deb.sh    # outputs dist/inplace-unpack_<ver>_all.deb
+./packaging/build-rpm.sh    # outputs dist/inplace-unpack-<ver>-1.noarch.rpm (requires rpm-build)
 ```
 
 ---

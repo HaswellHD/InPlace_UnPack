@@ -1,0 +1,116 @@
+name: Release (DEB, RPM, Linux tarball)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.4.1). Leave empty to use v<__version__>."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine version
+        id: ver
+        run: |
+          V="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.tag }}"
+          fi
+          if [ -z "$V" ] || [ "$V" = "main" ]; then
+            V="v$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('inplace_unpack/__init__.py').read()).group(1))")"
+          fi
+          echo "tag=$V" >> "$GITHUB_OUTPUT"
+          echo "version=${V#v}" >> "$GITHUB_OUTPUT"
+      - name: Build .deb
+        run: |
+          chmod +x packaging/build-deb.sh
+          OUT_DIR=dist ./packaging/build-deb.sh "${{ steps.ver.outputs.version }}"
+          dpkg-deb --info dist/inplace-unpack_${{ steps.ver.outputs.version }}_all.deb
+      - name: Build portable Linux tarball
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          STAGE="inplace-unpack-${V}-linux"
+          mkdir -p "$STAGE"
+          cp -a inplace_unpack assets packaging app_gui.py app_cli.py install-linux.sh LICENSE Readme.md Changelog.md "$STAGE/"
+          find "$STAGE" -name "__pycache__" -type d -exec rm -rf {} +
+          tar -czf "dist/${STAGE}.tar.gz" "$STAGE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-and-tarball
+          path: dist/*
+
+  build-rpm:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rpm-build and python3
+        run: dnf install -y rpm-build python3 tar gzip findutils
+      - name: Determine version
+        id: ver
+        run: |
+          V="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.tag }}"
+          fi
+          if [ -z "$V" ] || [ "$V" = "main" ]; then
+            V="v$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('inplace_unpack/__init__.py').read()).group(1))")"
+          fi
+          echo "version=${V#v}" >> "$GITHUB_OUTPUT"
+      - name: Build .rpm
+        run: |
+          chmod +x packaging/build-rpm.sh
+          OUT_DIR=dist ./packaging/build-rpm.sh "${{ steps.ver.outputs.version }}"
+          rpm -qip dist/inplace-unpack-${{ steps.ver.outputs.version }}-1.noarch.rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-package
+          path: dist/*.rpm
+
+  publish:
+    needs: [build-deb, build-rpm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Determine release tag
+        id: ver
+        run: |
+          V="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.tag }}"
+          fi
+          if [ -z "$V" ] || [ "$V" = "main" ]; then
+            V="v$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('inplace_unpack/__init__.py').read()).group(1))")"
+          fi
+          echo "tag=$V" >> "$GITHUB_OUTPUT"
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Inplace-Unpack ${{ steps.ver.outputs.tag }} (Linux)
+          generate_release_notes: true
+          files: |
+            artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS.txt

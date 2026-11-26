@@ -7,6 +7,7 @@ Linux:   KDE Dolphin ServiceMenu (~/.local/share/kio/servicemenus) and, when GNO
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 
 KEY_NAME = "InplaceUnpack"
@@ -39,9 +40,9 @@ def _nautilus_script_dir() -> str:
 
 
 def _linux_exec_prefix() -> str:
-    launcher = os.path.expanduser("~/.local/bin/inplace-unpack")
-    if os.path.isfile(launcher) and os.access(launcher, os.X_OK):
-        return f'"{launcher}"'
+    for cand in (os.path.expanduser("~/.local/bin/inplace-unpack"), shutil.which("inplace-unpack")):
+        if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return f'"{cand}"'
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     app_gui = os.path.join(root, "app_gui.py")
     if os.path.exists(app_gui):

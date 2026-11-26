@@ -23,7 +23,9 @@ _PUNCH_FS = {
     "ocfs2", "gfs2", "ntfs3", "fuseblk", "ceph",
 }
 
-_libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+_libc = ctypes.CDLL(None, use_errno=True)
+if not hasattr(_libc, "fallocate64") and not hasattr(_libc, "fallocate"):
+    _libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
 _fallocate_fn = getattr(_libc, "fallocate64", _libc.fallocate)
 _fallocate_fn.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int64, ctypes.c_int64]
 _fallocate_fn.restype = ctypes.c_int

@@ -5,7 +5,25 @@ on:
   pull_request:
 
 jobs:
-  test:
+  test-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install tkinter and pytest
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb
+          python -m pip install pytest
+      - run: xvfb-run -a python -m pytest tests -q -p no:cacheprovider
+
+  test-windows:
     runs-on: windows-latest
     strategy:
       fail-fast: false

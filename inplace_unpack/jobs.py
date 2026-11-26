@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 
 from . import journal
@@ -83,9 +84,9 @@ def _linux_autostart_file() -> str:
 
 def _launch_command() -> str:
     if os.name != "nt":
-        launcher = os.path.expanduser("~/.local/bin/inplace-unpack")
-        if os.path.isfile(launcher) and os.access(launcher, os.X_OK):
-            return f'"{launcher}" --resume-pending'
+        for cand in (os.path.expanduser("~/.local/bin/inplace-unpack"), shutil.which("inplace-unpack")):
+            if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
+                return f'"{cand}" --resume-pending'
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         app_gui = os.path.join(root, "app_gui.py")
         if os.path.exists(app_gui):
