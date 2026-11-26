@@ -20,7 +20,7 @@
 
 ## What's this?
 
-I had a 210 GB ZIP and 130 GB of free space. Explorer, 7-Zip and WinRAR all need room for the archive and
+I had a 160 GB ZIP and 130 GB of free space. Explorer, 7-Zip and WinRAR all need room for the archive and
 the extracted files at the same time, so none of them worked.
 
 Inplace-Unpack unpacks the files in the order they sit inside the ZIP. As soon as a file is safely on disk,
