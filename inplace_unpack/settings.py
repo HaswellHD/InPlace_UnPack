@@ -159,7 +159,10 @@ def ram_budget(s: Settings) -> int:
 
 # --- persistence ---------------------------------------------------------------
 def config_dir() -> str:
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return os.path.join(base, "Inplace-Unpack")
 
 

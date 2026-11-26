@@ -98,7 +98,7 @@ def main(argv=None) -> int:
     def progress(pr: engine.Progress):
         sys.stdout.write("\r" + t("status_running", done=pr.entries_done, ntotal=pr.entries_total,
                                   bytes=fmt_bytes(pr.bytes_done), btotal=fmt_bytes(pr.bytes_total),
-                                  speed=fmt_bytes(int(pr.speed)),
+                                  speed=fmt_bytes(int(pr.speed)), avg=fmt_bytes(int(pr.avg_speed)),
                                   alloc=fmt_bytes(pr.archive_allocated),
                                   free=fmt_bytes(pr.free)) + f" · ETA {fmt_duration(pr.eta)}   ")
         sys.stdout.flush()

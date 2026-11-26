@@ -135,7 +135,7 @@ class App:
             self.mon.columnconfigure(c, weight=1, uniform="mon")
             ttk.Label(cell, text=t(key), foreground="#555").pack(anchor="w")
             v = tk.StringVar(value="–")
-            ttk.Label(cell, textvariable=v, font=("Segoe UI", 10, "bold")).pack(anchor="w")
+            ttk.Label(cell, textvariable=v, font=("Segoe UI" if os.name == "nt" else "TkDefaultFont", 10, "bold")).pack(anchor="w")
             self.mon_vals[key] = v
             if key in ("m_cpu", "m_ram"):
                 b = ttk.Progressbar(cell, maximum=100, length=180)
@@ -633,6 +633,14 @@ def set_window_icon(root: tk.Tk) -> None:
     """Window/taskbar icon: bundled by PyInstaller (sys._MEIPASS) or from the repo."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     ico = os.path.join(base, "assets", "icon.ico")
+    if os.name != "nt":
+        png = os.path.join(base, "assets", "icon.png")
+        try:
+            root._icon_img = tk.PhotoImage(file=png)
+            root.iconphoto(True, root._icon_img)
+        except tk.TclError:
+            pass
+        return
     if os.path.exists(ico):
         try:
             root.iconbitmap(default=ico)  # also used by dialogs
@@ -647,9 +655,9 @@ def main(argv=None):
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
-    root = tk.Tk()
+    root = tk.Tk(className="inplace-unpack")
     try:
-        ttk.Style().theme_use("vista")
+        ttk.Style().theme_use("vista" if os.name == "nt" else "clam")
     except tk.TclError:
         pass
     set_window_icon(root)

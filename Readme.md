@@ -72,6 +72,27 @@ cd InPlace_UnPack
 python app_gui.py
 ```
 
+## Linux (this fork)
+
+This fork adds Linux support next to the unchanged Windows code. Instead of NTFS sparse files it
+releases space with `fallocate(FALLOC_FL_PUNCH_HOLE)`, which works on **btrfs, ext4, xfs**, f2fs and
+tmpfs without root.
+
+```sh
+sudo dnf install python3-tkinter        # Debian/Ubuntu: sudo apt install python3-tk
+git clone https://github.com/ezgerazer/InPlace_UnPack-forlinux.git
+cd InPlace_UnPack-forlinux
+./install-linux.sh                      # app-menu entry + `inplace-unpack` / `inplace-unpack-cli`
+```
+
+What is different on Linux:
+
+- File-system calls: `inplace_unpack/_winfs_posix.py`; resource monitor via `/proc`: `_sysinfo_posix.py`.
+- The "right-click entry" option creates a KDE Dolphin service menu (`~/.local/share/kio/servicemenus`).
+- "Resume after reboot" uses `~/.config/autostart`; settings live in `~/.config/Inplace-Unpack`.
+- Tested on Fedora 45 (KDE, btrfs, Python 3.15). The Windows-only tests (registry, `mklink /J`,
+  case-insensitive names) fail on Linux by design.
+
 ## How to use it
 
 1. Pick the ZIP (or the first part, `.zip.001`) and a target folder. Or right-click the ZIP in Explorer.

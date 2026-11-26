@@ -27,7 +27,27 @@ def icon_path() -> str:
     return sys.executable if getattr(sys, "frozen", False) else ""
 
 
+def _kde_menu_file() -> str:
+    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    return os.path.join(base, "kio", "servicemenus", "inplace-unpack.desktop")
+
+
+def _linux_install(label: str) -> None:
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    f = _kde_menu_file()
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    with open(f, "w", encoding="utf-8") as fh:
+        fh.write("[Desktop Entry]\nType=Service\n"
+                 "MimeType=application/zip;application/x-zip-compressed;application/octet-stream;\n"
+                 "Actions=inplaceUnpack;\nX-KDE-Priority=TopLevel\n\n"
+                 f"[Desktop Action inplaceUnpack]\nName={label}\nIcon=inplace-unpack\n"
+                 f'Exec="{sys.executable}" "{os.path.join(root, "app_gui.py")}" %f\n')
+    os.chmod(f, 0o755)
+
+
 def install(label: str) -> None:
+    if os.name != "nt":
+        return _linux_install(label)
     import winreg
     for ext in EXTENSIONS:
         key = _BASE.format(ext=ext)
@@ -41,6 +61,10 @@ def install(label: str) -> None:
 
 
 def uninstall() -> None:
+    if os.name != "nt":
+        if os.path.exists(_kde_menu_file()):
+            os.remove(_kde_menu_file())
+        return
     import winreg
     for ext in EXTENSIONS:
         key = _BASE.format(ext=ext)
@@ -52,6 +76,8 @@ def uninstall() -> None:
 
 
 def installed() -> bool:
+    if os.name != "nt":
+        return os.path.exists(_kde_menu_file())
     import winreg
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _BASE.format(ext=".zip") + r"\command"):

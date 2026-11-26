@@ -75,7 +75,15 @@ def pending() -> list[dict]:
     return out
 
 
+def _linux_autostart_file() -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "autostart", "inplace-unpack-resume.desktop")
+
+
 def _launch_command() -> str:
+    if os.name != "nt":
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return f'"{sys.executable}" "{os.path.join(root, "app_gui.py")}" --resume-pending'
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}" --resume-pending'
     pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
@@ -86,6 +94,20 @@ def _launch_command() -> str:
 
 def set_autostart(enabled: bool) -> None:
     if DISABLED:
+        return
+    if os.name != "nt":
+        f = _linux_autostart_file()
+        try:
+            if enabled:
+                os.makedirs(os.path.dirname(f), exist_ok=True)
+                with open(f, "w", encoding="utf-8") as fh:
+                    fh.write("[Desktop Entry]\nType=Application\nName=Inplace-Unpack (resume)\n"
+                             f"Exec={_launch_command()}\nIcon=inplace-unpack\n"
+                             "X-GNOME-Autostart-enabled=true\n")
+            elif os.path.exists(f):
+                os.remove(f)
+        except OSError:
+            pass
         return
     import winreg
     try:
@@ -103,6 +125,8 @@ def set_autostart(enabled: bool) -> None:
 
 
 def autostart_enabled() -> bool:
+    if os.name != "nt":
+        return os.path.exists(_linux_autostart_file())
     import winreg
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:

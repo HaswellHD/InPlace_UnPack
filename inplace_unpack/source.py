@@ -111,7 +111,7 @@ class _PartsReader(io.RawIOBase):
             if i != self.cur:
                 self._close_fh()
                 fd = os.open(winfs.long_path(self.paths[i]),
-                             os.O_RDONLY | os.O_BINARY | getattr(os, "O_SEQUENTIAL", 0))
+                             os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_SEQUENTIAL", 0))
                 self.fh, self.cur = os.fdopen(fd, "rb"), i
             off = self.pos - self.starts[i]
             self.fh.seek(off)
@@ -186,7 +186,7 @@ class ArchiveSource:
         """Binary, seekable file object for zipfile."""
         if not self.split:
             fd = os.open(winfs.long_path(self.archive),
-                         os.O_RDONLY | os.O_BINARY | getattr(os, "O_SEQUENTIAL", 0))
+                         os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_SEQUENTIAL", 0))
             return os.fdopen(fd, "rb")
         self._reader = _PartsReader(self.paths, self.sizes)
         return io.BufferedReader(self._reader, buffer_size=256 * 1024)
