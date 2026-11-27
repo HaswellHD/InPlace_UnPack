@@ -1,116 +1,152 @@
-name: Release (DEB, RPM, Linux tarball)
+name: release
 
+# Every push to main builds everything (so a broken build shows up early).
+# Pushing a tag like v0.5.0 also publishes a GitHub Release with all files.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag (e.g. v0.4.1). Leave empty to use v<__version__>."
-        required: false
-        default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-deb:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          V="$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('inplace_unpack/__init__.py').read()).group(1))")"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$V" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match __version__ $V"
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Install Inno Setup (for the installer)
+        run: choco install innosetup -y --no-progress
+      - name: Build .exe files and installer
+        shell: powershell
+        run: .\build.ps1 -SkipTests
+      - name: Check that all three files exist
+        shell: bash
+        run: ls -l dist/Inplace-Unpack.exe dist/inplace-unpack-cli.exe dist/Inplace-Unpack-Setup.exe
+      - uses: actions/upload-artifact@v5
+        with:
+          name: windows
+          path: |
+            dist/Inplace-Unpack.exe
+            dist/inplace-unpack-cli.exe
+            dist/Inplace-Unpack-Setup.exe
+
+  appimage:
+    needs: version
+    # old Ubuntu on purpose: an AppImage runs on systems at least as new as the build system
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtk8.6
+          python -m pip install pyinstaller
+      - name: Build AppImage
+        run: |
+          chmod +x packaging/build-appimage.sh
+          PYTHON=python OUT_DIR=dist ./packaging/build-appimage.sh
+      - name: Smoke test (command line inside the AppImage)
+        run: |
+          chmod +x dist/Inplace-Unpack-x86_64.AppImage
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          dist/Inplace-Unpack-x86_64.AppImage cli --version
+          python - << 'EOF'
+          import zipfile
+          with zipfile.ZipFile("smoke.zip", "w", zipfile.ZIP_DEFLATED) as z:
+              for i in range(20):
+                  z.writestr(f"dir/file{i}.txt", ("hello %d\n" % i) * 50000)
+          EOF
+          dist/Inplace-Unpack-x86_64.AppImage cli smoke.zip smoke-out --yes
+          test "$(head -1 smoke-out/dir/file7.txt)" = "hello 7"
+          test "$(ls smoke-out/dir | wc -l)" = "20"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: appimage
+          path: dist/Inplace-Unpack-x86_64.AppImage
+
+  deb:
+    needs: version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Determine version
-        id: ver
+      - uses: actions/checkout@v5
+      - name: Build .deb and portable tarball
         run: |
-          V="${GITHUB_REF_NAME}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            V="${{ github.event.inputs.tag }}"
-          fi
-          if [ -z "$V" ] || [ "$V" = "main" ]; then
-            V="v$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('inplace_unpack/__init__.py').read()).group(1))")"
-          fi
-          echo "tag=$V" >> "$GITHUB_OUTPUT"
-          echo "version=${V#v}" >> "$GITHUB_OUTPUT"
-      - name: Build .deb
-        run: |
+          V="${{ needs.version.outputs.version }}"
           chmod +x packaging/build-deb.sh
-          OUT_DIR=dist ./packaging/build-deb.sh "${{ steps.ver.outputs.version }}"
-          dpkg-deb --info dist/inplace-unpack_${{ steps.ver.outputs.version }}_all.deb
-      - name: Build portable Linux tarball
-        run: |
-          V="${{ steps.ver.outputs.version }}"
+          OUT_DIR=dist ./packaging/build-deb.sh "$V"
+          dpkg-deb --info "dist/inplace-unpack_${V}_all.deb"
           STAGE="inplace-unpack-${V}-linux"
           mkdir -p "$STAGE"
           cp -a inplace_unpack assets packaging app_gui.py app_cli.py install-linux.sh LICENSE Readme.md Changelog.md "$STAGE/"
           find "$STAGE" -name "__pycache__" -type d -exec rm -rf {} +
           tar -czf "dist/${STAGE}.tar.gz" "$STAGE"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
-          name: deb-and-tarball
+          name: deb
           path: dist/*
 
-  build-rpm:
+  rpm:
+    needs: version
     runs-on: ubuntu-latest
     container:
       image: fedora:latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install rpm-build and python3
-        run: dnf install -y rpm-build python3 tar gzip findutils
-      - name: Determine version
-        id: ver
-        run: |
-          V="${GITHUB_REF_NAME}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            V="${{ github.event.inputs.tag }}"
-          fi
-          if [ -z "$V" ] || [ "$V" = "main" ]; then
-            V="v$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('inplace_unpack/__init__.py').read()).group(1))")"
-          fi
-          echo "version=${V#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+      - run: dnf install -y rpm-build python3 tar gzip findutils
       - name: Build .rpm
         run: |
+          V="${{ needs.version.outputs.version }}"
           chmod +x packaging/build-rpm.sh
-          OUT_DIR=dist ./packaging/build-rpm.sh "${{ steps.ver.outputs.version }}"
-          rpm -qip dist/inplace-unpack-${{ steps.ver.outputs.version }}-1.noarch.rpm
-      - uses: actions/upload-artifact@v4
+          OUT_DIR=dist ./packaging/build-rpm.sh "$V"
+          rpm -qip "dist/inplace-unpack-${V}-1.noarch.rpm"
+      - uses: actions/upload-artifact@v5
         with:
-          name: rpm-package
+          name: rpm
           path: dist/*.rpm
 
   publish:
-    needs: [build-deb, build-rpm]
+    if: github.ref_type == 'tag'
+    needs: [version, windows, appimage, deb, rpm]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
         with:
           path: artifacts
           merge-multiple: true
-      - name: Determine release tag
-        id: ver
+      - name: Checksums and release notes
         run: |
-          V="${GITHUB_REF_NAME}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            V="${{ github.event.inputs.tag }}"
-          fi
-          if [ -z "$V" ] || [ "$V" = "main" ]; then
-            V="v$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('inplace_unpack/__init__.py').read()).group(1))")"
-          fi
-          echo "tag=$V" >> "$GITHUB_OUTPUT"
-      - name: Checksums
-        run: |
-          cd artifacts
-          sha256sum * > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+          (cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          sed "s/{VERSION}/${{ needs.version.outputs.version }}/g" .github/release-notes.md > notes.md
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          name: Inplace-Unpack ${{ steps.ver.outputs.tag }} (Linux)
-          generate_release_notes: true
-          files: |
-            artifacts/*.deb
-            artifacts/*.rpm
-            artifacts/*.tar.gz
-            artifacts/SHA256SUMS.txt
+          name: Inplace-Unpack ${{ github.ref_name }}
+          body_path: notes.md
+          files: artifacts/*

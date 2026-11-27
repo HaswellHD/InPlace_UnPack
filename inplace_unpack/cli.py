@@ -55,7 +55,18 @@ def build_settings(a) -> st.Settings:
     return st.validate(s)[0]
 
 
+def _safe_console() -> None:
+    """Never crash on characters the console can't show (e.g. a Windows code page
+    when the output is redirected to a file): print a "?" instead."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv=None) -> int:
+    _safe_console()
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "bench":
         from . import bench

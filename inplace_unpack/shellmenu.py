@@ -40,6 +40,8 @@ def _nautilus_script_dir() -> str:
 
 
 def _linux_exec_prefix() -> str:
+    if os.environ.get("APPIMAGE"):  # running from an AppImage: its mount point is temporary
+        return f'"{os.environ["APPIMAGE"]}"'
     for cand in (os.path.expanduser("~/.local/bin/inplace-unpack"), shutil.which("inplace-unpack")):
         if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
             return f'"{cand}"'

@@ -15,7 +15,7 @@
         in
         pkgs.stdenv.mkDerivation {
           pname = "inplace-unpack";
-          version = "0.4.1";
+          version = "0.5.0";
           src = self;
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
@@ -51,7 +51,7 @@
 
           meta = with pkgs.lib; {
             description = "Unzip huge ZIP files on a nearly full disk by punching holes as you extract";
-            homepage = "https://github.com/ezgerazer/InPlace_UnPack-forlinux";
+            homepage = "https://github.com/HaswellHD/InPlace_UnPack";
             license = licenses.mit;
             platforms = platforms.linux;
             mainProgram = "inplace-unpack";

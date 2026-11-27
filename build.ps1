@@ -60,8 +60,9 @@ function Invoke-Sign([string]$file) {
 Invoke-Sign "dist\Inplace-Unpack.exe"
 Invoke-Sign "dist\inplace-unpack-cli.exe"
 
-$iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-if (Test-Path $iscc) {
+$iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") |
+    Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($iscc) {
     & $iscc installer.iss
     if (Test-Path "dist\Inplace-Unpack-Setup.exe") { Invoke-Sign "dist\Inplace-Unpack-Setup.exe" }
 } else {

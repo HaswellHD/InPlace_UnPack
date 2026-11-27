@@ -133,6 +133,13 @@ def test_shell_menu_registry(tmp_path, monkeypatch):
         assert (tmp_path / "xdg" / "nautilus" / "scripts" / "Inplace-Unpack").exists()
         shellmenu.uninstall()
         assert not shellmenu.installed()
+        # started from an AppImage: the menu must point at the .AppImage file itself,
+        # not at the temporary mount point it runs from
+        monkeypatch.setenv("APPIMAGE", "/home/u/Apps/Inplace-Unpack-x86_64.AppImage")
+        shellmenu.install("Extract with Inplace-Unpack")
+        kde_file = (tmp_path / "xdg" / "kio" / "servicemenus" / "inplace-unpack.desktop").read_text()
+        assert 'Exec="/home/u/Apps/Inplace-Unpack-x86_64.AppImage" %f' in kde_file
+        shellmenu.uninstall()
         return
     import winreg
     monkeypatch.setattr(shellmenu, "_BASE",

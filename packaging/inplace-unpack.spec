@@ -1,9 +1,9 @@
 Name:           inplace-unpack
-Version:        %{?_version:%{_version}}%{!?_version:0.4.0}
+Version:        %{?_version:%{_version}}%{!?_version:0.5.0}
 Release:        1%{?dist}
 Summary:        Extract huge ZIPs on a nearly full disk via fallocate hole punching
 License:        MIT
-URL:            https://github.com/ezgerazer/InPlace_UnPack-forlinux
+URL:            https://github.com/HaswellHD/InPlace_UnPack
 Source0:        %{name}-%{version}.tar.gz
 BuildArch:      noarch
 

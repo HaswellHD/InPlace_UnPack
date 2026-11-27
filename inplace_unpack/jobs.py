@@ -84,6 +84,8 @@ def _linux_autostart_file() -> str:
 
 def _launch_command() -> str:
     if os.name != "nt":
+        if os.environ.get("APPIMAGE"):  # running from an AppImage: its mount point is temporary
+            return f'"{os.environ["APPIMAGE"]}" --resume-pending'
         for cand in (os.path.expanduser("~/.local/bin/inplace-unpack"), shutil.which("inplace-unpack")):
             if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
                 return f'"{cand}" --resume-pending'

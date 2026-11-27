@@ -1,7 +1,7 @@
 ﻿; Inno Setup 6 script - compile with ISCC.exe installer.iss (build.ps1 does it if installed)
 ; Per-user install: no admin rights needed.
 #define AppName "Inplace-Unpack"
-#define AppVersion "0.4.0"
+#define AppVersion "0.5.0"
 #define AppExe "Inplace-Unpack.exe"
 
 [Setup]

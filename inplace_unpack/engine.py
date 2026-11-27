@@ -176,7 +176,8 @@ def _open_archive(src: source.ArchiveSource, name_encoding):
 def _copy_to_local_part(part: str, local_part: str, durable: bool) -> None:
     shutil.copyfile(part, local_part)
     if durable:
-        with open(local_part, "rb") as dst:
+        # "r+b", not "rb": Windows can only flush a handle that was opened for writing
+        with open(local_part, "r+b") as dst:
             os.fsync(dst.fileno())
     shutil.copystat(part, local_part)
     os.remove(part)

@@ -43,8 +43,8 @@ Priority: optional
 Architecture: all
 Installed-Size: $SIZE_KB
 Depends: python3 (>= 3.11), python3-tk
-Maintainer: ezgerazer <ezgerazer@users.noreply.github.com>
-Homepage: https://github.com/ezgerazer/InPlace_UnPack-forlinux
+Maintainer: EZG_Haswell <HaswellHD@users.noreply.github.com>
+Homepage: https://github.com/HaswellHD/InPlace_UnPack
 Description: Extract huge ZIPs on a nearly full disk via hole punching
  Inplace-Unpack extracts ZIP entries in file-offset order and frees the
  already-extracted byte ranges of the archive back to the filesystem using
